@@ -18,3 +18,41 @@ bin/
 *.log
 
 *.sqlite3
+# Environment
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Go
+bin/
+dist/
+
+# Node
+node_modules/
+.next/
+out/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Coverage
+coverage/
+
+# Database
+*.db
+
+# Docker
+docker-data/
