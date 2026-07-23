@@ -4,24 +4,22 @@ func Collect() (*Inventory, error) {
 
 	inv := &Inventory{}
 
-	if err := collectHostname(inv); err != nil {
-		return nil, err
+	collectors := []func(*Inventory) error{
+		collectHostname,
+		collectOS,
+		collectKernel,
+		collectCPU,
+		collectMemory,
+		collectDisk,
+		collectNetwork,
+		collectVirtualization,
 	}
 
-	if err := collectOS(inv); err != nil {
-		return nil, err
-	}
-
-	if err := collectKernel(inv); err != nil {
-		return nil, err
-	}
-
-	if err := collectCPU(inv); err != nil {
-		return nil, err
-	}
-
-	if err := collectMemory(inv); err != nil {
-		return nil, err
+	for _, c := range collectors {
+		if err := c(inv); err != nil {
+			// Optional collectors can return nil internally.
+			return nil, err
+		}
 	}
 
 	return inv, nil
