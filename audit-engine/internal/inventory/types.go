@@ -14,6 +14,7 @@ type Inventory struct {
 	Disk           []DiskInfo        `json:"disk,omitempty"`
 	Network        []NetworkInfo     `json:"network,omitempty"`
 	Virtualization Virtualization    `json:"virtualization,omitempty"`
+	Services       []ServiceInfo     `json:"services,omitempty"`
 	Docker         *docker.Inventory `json:"docker,omitempty"`
 }
 
@@ -80,4 +81,15 @@ type CloudInfo struct {
 	Hostname       string            `json:"hostname,omitempty"`
 	Tags           []string          `json:"tags,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
+}
+
+type ServiceInfo struct {
+	Name          string `json:"name"`
+	Description   string `json:"description,omitempty"`
+	State         string `json:"state"`
+	SubState      string `json:"sub_state,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	ActiveSince   string `json:"active_since,omitempty"`
+	MainPID       int    `json:"main_pid,omitempty"`
+	MemoryCurrent string `json:"memory_current,omitempty"`
 }

@@ -17,6 +17,7 @@ func Collect() (*Inventory, error) {
 		collectMemory,
 		collectDisk,
 		collectNetwork,
+		collectServices,
 		collectVirtualization,
 	}
 

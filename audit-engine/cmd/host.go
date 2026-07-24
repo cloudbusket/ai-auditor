@@ -28,6 +28,7 @@ var hostCmd = &cobra.Command{
 			Disk           []inventory.DiskInfo     `json:"disk,omitempty"`
 			Network        []inventory.NetworkInfo  `json:"network,omitempty"`
 			Virtualization inventory.Virtualization `json:"virtualization,omitempty"`
+			Services       []inventory.ServiceInfo  `json:"services"`
 		}{
 			Hostname:       info.Hostname,
 			OS:             info.OS,
@@ -37,6 +38,7 @@ var hostCmd = &cobra.Command{
 			Disk:           info.Disk,
 			Network:        info.Network,
 			Virtualization: info.Virtualization,
+			Services:       info.Services,
 		}
 
 		b, _ := json.MarshalIndent(host, "", "  ")
