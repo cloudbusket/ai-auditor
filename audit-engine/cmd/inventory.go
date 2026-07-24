@@ -11,25 +11,38 @@ import (
 
 var inventoryCmd = &cobra.Command{
 	Use:   "inventory",
-	Short: "Collect host inventory",
-	Long: `Collect detailed host inventory including:
+	Short: "Collect complete system inventory",
+	Long: `Collect the complete infrastructure inventory.
 
-• Operating System
-• CPU
-• Memory
-• Kernel
-• Hostname
+This command combines all available collectors:
 
-The inventory is returned as formatted JSON.`,
+  • Host
+  • Cloud
+  • Operating System
+  • CPU
+  • Memory
+  • Kernel
+  • Disk
+  • Network
+  • Virtualization
+  • Docker
+  • (Kubernetes - when available)
+
+Examples:
+
+  auditor inventory
+  auditor inventory --pretty
+  auditor inventory --output json
+`,
 
 	Run: func(cmd *cobra.Command, args []string) {
 
-		info, err := inventory.Collect()
+		inv, err := inventory.Collect()
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		b, err := json.MarshalIndent(info, "", "  ")
+		b, err := json.MarshalIndent(inv, "", "  ")
 		if err != nil {
 			log.Fatal(err)
 		}

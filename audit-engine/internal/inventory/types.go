@@ -1,14 +1,20 @@
 package inventory
 
+import (
+	"github.com/cloudbusket/ai-auditor/audit-engine/internal/docker"
+)
+
 type Inventory struct {
-	Hostname       string         `json:"hostname"`
-	OS             OSInfo         `json:"os"`
-	Kernel         KernelInfo     `json:"kernel"`
-	CPU            CPUInfo        `json:"cpu"`
-	Memory         MemoryInfo     `json:"memory"`
-	Disk           []DiskInfo     `json:"disk,omitempty"`
-	Network        []NetworkInfo  `json:"network,omitempty"`
-	Virtualization Virtualization `json:"virtualization,omitempty"`
+	Hostname       string            `json:"hostname"`
+	Cloud          CloudInfo         `json:"cloud,omitempty"`
+	OS             OSInfo            `json:"os"`
+	Kernel         KernelInfo        `json:"kernel"`
+	CPU            CPUInfo           `json:"cpu"`
+	Memory         MemoryInfo        `json:"memory"`
+	Disk           []DiskInfo        `json:"disk,omitempty"`
+	Network        []NetworkInfo     `json:"network,omitempty"`
+	Virtualization Virtualization    `json:"virtualization,omitempty"`
+	Docker         *docker.Inventory `json:"docker,omitempty"`
 }
 
 type OSInfo struct {
@@ -57,4 +63,21 @@ type Virtualization struct {
 	Vendor   string `json:"vendor,omitempty"`
 	Role     string `json:"role,omitempty"`
 	Hostname string `json:"hostname,omitempty"`
+}
+
+type CloudInfo struct {
+	Provider       string            `json:"provider,omitempty"`
+	ProjectID      string            `json:"project_id,omitempty"`
+	ProjectNumber  string            `json:"project_number,omitempty"`
+	InstanceName   string            `json:"instance_name,omitempty"`
+	InstanceID     string            `json:"instance_id,omitempty"`
+	Zone           string            `json:"zone,omitempty"`
+	Region         string            `json:"region,omitempty"`
+	MachineType    string            `json:"machine_type,omitempty"`
+	InternalIP     string            `json:"internal_ip,omitempty"`
+	ExternalIP     string            `json:"external_ip,omitempty"`
+	ServiceAccount string            `json:"service_account,omitempty"`
+	Hostname       string            `json:"hostname,omitempty"`
+	Tags           []string          `json:"tags,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
 }
