@@ -1,12 +1,16 @@
 package docker
 
 type Inventory struct {
-	Installed  bool        `json:"installed"`
-	Version    VersionInfo `json:"version,omitempty"`
-	Containers []Container `json:"containers,omitempty"`
-	Images     []Image     `json:"images,omitempty"`
-	Networks   []Network   `json:"networks,omitempty"`
-	Volumes    []Volume    `json:"volumes,omitempty"`
+	// Installed indicates that the Docker CLI is installed.
+	Installed       bool        `json:"installed"`
+	CLIAvailable    bool        `json:"cli_available"`
+	DaemonAvailable bool        `json:"daemon_available"`
+	Error           string      `json:"error,omitempty"`
+	Version         VersionInfo `json:"version,omitempty"`
+	Containers      []Container `json:"containers,omitempty"`
+	Images          []Image     `json:"images,omitempty"`
+	Networks        []Network   `json:"networks,omitempty"`
+	Volumes         []Volume    `json:"volumes,omitempty"`
 }
 
 type VersionInfo struct {
@@ -25,6 +29,7 @@ type Container struct {
 	State   string `json:"state"`
 	Status  string `json:"status"`
 	Running bool   `json:"running"`
+	Health  string `json:"health,omitempty"`
 }
 
 type Image struct {
