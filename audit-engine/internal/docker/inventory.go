@@ -35,6 +35,8 @@ func Collect() (*Inventory, error) {
 		{"images", collectImages},
 		{"networks", collectNetworks},
 		{"volumes", collectVolumes},
+		{"storage", collectStorage},
+		{"docker filesystem", collectDockerFilesystem},
 	}
 
 	var collectionErrors []string

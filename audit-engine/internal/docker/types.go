@@ -2,15 +2,21 @@ package docker
 
 type Inventory struct {
 	// Installed indicates that the Docker CLI is installed.
-	Installed       bool        `json:"installed"`
-	CLIAvailable    bool        `json:"cli_available"`
-	DaemonAvailable bool        `json:"daemon_available"`
-	Error           string      `json:"error,omitempty"`
-	Version         VersionInfo `json:"version,omitempty"`
-	Containers      []Container `json:"containers,omitempty"`
-	Images          []Image     `json:"images,omitempty"`
-	Networks        []Network   `json:"networks,omitempty"`
-	Volumes         []Volume    `json:"volumes,omitempty"`
+	Installed             bool           `json:"installed"`
+	CLIAvailable          bool           `json:"cli_available"`
+	DaemonAvailable       bool           `json:"daemon_available"`
+	Error                 string         `json:"error,omitempty"`
+	Version               VersionInfo    `json:"version,omitempty"`
+	Containers            []Container    `json:"containers,omitempty"`
+	Images                []Image        `json:"images,omitempty"`
+	Networks              []Network      `json:"networks,omitempty"`
+	Volumes               []Volume       `json:"volumes,omitempty"`
+	Storage               []StorageEntry `json:"storage,omitempty"`
+	DockerRootDir         string         `json:"docker_root_dir,omitempty"`
+	FilesystemSizeGB      uint64         `json:"filesystem_size_gb,omitempty"`
+	FilesystemUsedGB      uint64         `json:"filesystem_used_gb,omitempty"`
+	FilesystemFreeGB      uint64         `json:"filesystem_free_gb,omitempty"`
+	FilesystemUsedPercent uint64         `json:"filesystem_used_percent,omitempty"`
 }
 
 type VersionInfo struct {

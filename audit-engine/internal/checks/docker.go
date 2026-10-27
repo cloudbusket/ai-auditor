@@ -132,4 +132,72 @@ func checkDocker(report *Report, inv *inventory.Inventory) {
 			Recommendation: "Review Docker command errors and verify the auditor can query containers, images, networks, and volumes.",
 		})
 	}
+
+	// DCK005: report Docker storage usage without deleting anything.
+	if len(d.Storage) == 0 {
+		report.Add(Finding{
+			ID: "DCK005", Category: "docker",
+			Status: StatusWarning, Severity: "medium",
+			Message:        "Docker storage usage could not be collected.",
+			Recommendation: "Check `docker system df` and Docker permissions.",
+		})
+	} else {
+		var details []string
+		for _, item := range d.Storage {
+			details = append(details, fmt.Sprintf(
+				"%s: %s used, %s reclaimable (%s items, %s active)",
+				item.Type, item.Size, item.Reclaimable,
+				item.TotalCount, item.Active,
+			))
+		}
+		report.Add(Finding{
+			ID: "DCK005", Category: "docker",
+			Status: StatusPass, Severity: "info",
+			Message:        "Docker storage usage: " + strings.Join(details, "; ") + ".",
+			Recommendation: "Review reclaimable resources before manual cleanup. The auditor does not delete Docker resources.",
+		})
+	}
+
+	// DCK006: assess the filesystem containing Docker's data directory.
+	switch {
+	case d.DockerRootDir == "":
+		report.Add(Finding{
+			ID: "DCK006", Category: "docker",
+			Status: StatusWarning, Severity: "medium",
+			Message:        "Docker data-directory filesystem usage could not be determined.",
+			Recommendation: "Verify Docker data-directory access and filesystem statistics.",
+		})
+	case d.FilesystemUsedPercent >= 90:
+		report.Add(Finding{
+			ID: "DCK006", Category: "docker",
+			Status: StatusCritical, Severity: "high",
+			Message: fmt.Sprintf(
+				"Filesystem backing Docker data directory %s is %d%% full (%d GB used of %d GB).",
+				d.DockerRootDir, d.FilesystemUsedPercent,
+				d.FilesystemUsedGB, d.FilesystemSizeGB,
+			),
+			Recommendation: "Investigate filesystem growth urgently and review Docker storage before taking cleanup action.",
+		})
+	case d.FilesystemUsedPercent >= 80:
+		report.Add(Finding{
+			ID: "DCK006", Category: "docker",
+			Status: StatusWarning, Severity: "medium",
+			Message: fmt.Sprintf(
+				"Filesystem backing Docker data directory %s is %d%% full (%d GB used of %d GB).",
+				d.DockerRootDir, d.FilesystemUsedPercent,
+				d.FilesystemUsedGB, d.FilesystemSizeGB,
+			),
+			Recommendation: "Monitor disk growth and review Docker storage before the filesystem reaches critical capacity.",
+		})
+	default:
+		report.Add(Finding{
+			ID: "DCK006", Category: "docker",
+			Status: StatusPass, Severity: "info",
+			Message: fmt.Sprintf(
+				"Filesystem backing Docker data directory %s is %d%% full.",
+				d.DockerRootDir, d.FilesystemUsedPercent,
+			),
+		})
+	}
+
 }
