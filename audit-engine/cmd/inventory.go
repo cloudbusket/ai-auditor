@@ -76,7 +76,13 @@ func printInventorySummary(inv *inventory.Inventory) {
 		fmt.Printf("Cloud    : %s\n", inv.Cloud.Provider)
 	}
 
-	fmt.Printf("Disks    : %d\n", len(inv.Disk))
+	summaryDiskCount := 0
+	for _, disk := range inv.Disk {
+		if includeSummaryDisk(disk) {
+			summaryDiskCount++
+		}
+	}
+	fmt.Printf("Disks    : %d\n", summaryDiskCount)
 	fmt.Printf("Ports    : %d\n", len(inv.Ports))
 	fmt.Printf("Services : %d\n", len(inv.Services))
 
@@ -209,6 +215,10 @@ func printSummarySection(title string, items []string) {
 func includeSummaryDisk(disk inventory.DiskInfo) bool {
 	// Ignore loop devices used by temporary/container workloads.
 	if strings.HasPrefix(disk.Device, "/dev/loop") {
+		return false
+	}
+	// Ignore the binfmt_misc pseudo-mount.
+	if disk.Mount == "/proc/sys/fs/binfmt_misc" {
 		return false
 	}
 
