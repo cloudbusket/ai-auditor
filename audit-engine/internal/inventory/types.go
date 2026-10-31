@@ -5,17 +5,19 @@ import (
 )
 
 type Inventory struct {
-	Hostname       string            `json:"hostname"`
-	Cloud          CloudInfo         `json:"cloud,omitempty"`
-	OS             OSInfo            `json:"os"`
-	Kernel         KernelInfo        `json:"kernel"`
-	CPU            CPUInfo           `json:"cpu"`
-	Memory         MemoryInfo        `json:"memory"`
-	Disk           []DiskInfo        `json:"disk,omitempty"`
-	Network        []NetworkInfo     `json:"network,omitempty"`
-	Virtualization Virtualization    `json:"virtualization,omitempty"`
-	Services       []ServiceInfo     `json:"services,omitempty"`
-	Docker         *docker.Inventory `json:"docker,omitempty"`
+	Hostname            string            `json:"hostname"`
+	Cloud               CloudInfo         `json:"cloud,omitempty"`
+	OS                  OSInfo            `json:"os"`
+	Kernel              KernelInfo        `json:"kernel"`
+	CPU                 CPUInfo           `json:"cpu"`
+	Memory              MemoryInfo        `json:"memory"`
+	Disk                []DiskInfo        `json:"disk,omitempty"`
+	Network             []NetworkInfo     `json:"network,omitempty"`
+	Ports               []ListeningPort   `json:"ports,omitempty"`
+	PortCollectionError string            `json:"port_collection_error,omitempty"`
+	Virtualization      Virtualization    `json:"virtualization,omitempty"`
+	Services            []ServiceInfo     `json:"services,omitempty"`
+	Docker              *docker.Inventory `json:"docker,omitempty"`
 }
 
 type OSInfo struct {
@@ -57,6 +59,16 @@ type NetworkInfo struct {
 	State string   `json:"state"`
 	IPv4  []string `json:"ipv4,omitempty"`
 	IPv6  []string `json:"ipv6,omitempty"`
+}
+
+type ListeningPort struct {
+	Protocol    string `json:"protocol"`
+	Address     string `json:"address"`
+	Port        uint32 `json:"port"`
+	ProcessName string `json:"process_name,omitempty"`
+	PID         int32  `json:"pid,omitempty"`
+	Service     string `json:"service,omitempty"`
+	BindScope   string `json:"bind_scope"`
 }
 
 type Virtualization struct {
