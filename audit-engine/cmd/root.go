@@ -1,46 +1,64 @@
-/*
-Copyright © 2026 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
+	"fmt"
 	"os"
 
+	appversion "github.com/cloudbusket/ai-auditor/audit-engine/internal/version"
 	"github.com/spf13/cobra"
 )
 
-// rootCmd represents the base command when called without any subcommands
+const appDescription = "Infrastructure intelligence, health assessment and security auditing."
+
 var rootCmd = &cobra.Command{
 	Use:   "auditor",
-	Short: "CloudBusket AI Infrastructure Auditor",
-	Long: `CloudBusket AI Infrastructure Auditor
+	Short: appversion.AppName,
+	Long: `CloudBusket AI Auditor
 
-A fast, production-grade infrastructure auditing tool for Linux,
-Docker, Kubernetes and cloud environments.
+Infrastructure intelligence, health assessment and security auditing.
 
-It collects inventory, performs security and compliance checks,
-and outputs machine-readable JSON for the CloudBusket AI platform.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
+Inspect Linux systems, cloud environments, Docker workloads, network
+services and security configurations from one command-line interface.
+
+The auditor collects infrastructure inventory, evaluates system health,
+identifies potential risks and generates structured audit information.
+
+Documentation: https://cloudbusket.com
+`,
+	Version:       appversion.Version,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
-	err := rootCmd.Execute()
-	if err != nil {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 func init() {
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
+	rootCmd.SetHelpCommand(&cobra.Command{
+		Use:    "help [command]",
+		Short:  "Help about any command",
+		Hidden: false,
+	})
 
-	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.audit-engine.yaml)")
+	rootCmd.SetVersionTemplate(`{{with .Name}}{{printf "%s\n" .}}{{end}}Version: {{.Version}}
+`)
 
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
+	rootCmd.SetUsageTemplate(`Usage:
+  {{.UseLine}}
+
+{{if .HasAvailableSubCommands}}Available Commands:
+{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}  {{rpad .Name .NamePadding }} {{.Short}}
+{{end}}{{end}}{{end}}
+{{if .HasAvailableLocalFlags}}Flags:
+{{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}
+{{end}}
+{{if .HasAvailableInheritedFlags}}Global Flags:
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}
+{{end}}
+Use "{{.CommandPath}} [command] --help" for more information about a command.
+`)
 }
