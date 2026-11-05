@@ -12,12 +12,16 @@ const (
 )
 
 type Finding struct {
-	ID             string `json:"id"`
-	Category       string `json:"category"`
-	Status         Status `json:"status"`
-	Severity       string `json:"severity"`
-	Message        string `json:"message"`
-	Recommendation string `json:"recommendation,omitempty"`
+	ID             string         `json:"id"`
+	Source         string         `json:"source"`
+	Category       string         `json:"category"`
+	Asset          string         `json:"asset,omitempty"`
+	Status         Status         `json:"status"`
+	Severity       string         `json:"severity"`
+	Message        string         `json:"message"`
+	Description    string         `json:"description,omitempty"`
+	Recommendation string         `json:"recommendation,omitempty"`
+	Evidence       map[string]any `json:"evidence,omitempty"`
 }
 
 type Summary struct {
@@ -43,6 +47,11 @@ func NewReport() Report {
 }
 
 func (r *Report) Add(f Finding) {
+	// Existing checks are native auditor checks unless a source is specified.
+	if f.Source == "" {
+		f.Source = "native"
+	}
+
 	r.Findings = append(r.Findings, f)
 
 	switch f.Status {

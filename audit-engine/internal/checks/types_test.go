@@ -85,3 +85,70 @@ func TestReportJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestFindingDefaultsToNativeSource(t *testing.T) {
+	r := NewReport()
+
+	r.Add(Finding{
+		ID:       "TEST001",
+		Category: "host",
+		Status:   StatusWarning,
+		Severity: "medium",
+		Message:  "Test finding",
+	})
+
+	if len(r.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(r.Findings))
+	}
+
+	if r.Findings[0].Source != "native" {
+		t.Fatalf("expected source native, got %q", r.Findings[0].Source)
+	}
+}
+
+func TestFindingJSONIncludesExtendedFields(t *testing.T) {
+	r := NewReport()
+
+	r.Add(Finding{
+		ID:             "SNYK001",
+		Source:         "snyk",
+		Category:       "dependency",
+		Asset:          "payments-api",
+		Status:         StatusCritical,
+		Severity:       "high",
+		Message:        "Vulnerable dependency found",
+		Description:    "A dependency has a known vulnerability.",
+		Recommendation: "Upgrade the dependency.",
+		Evidence: map[string]any{
+			"package": "example-package",
+			"version": "1.0.0",
+		},
+	})
+
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded struct {
+		Findings []Finding `json:"findings"`
+	}
+
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(decoded.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(decoded.Findings))
+	}
+
+	f := decoded.Findings[0]
+
+	if f.Source != "snyk" ||
+		f.Category != "dependency" ||
+		f.Asset != "payments-api" ||
+		f.Description == "" ||
+		f.Evidence["package"] != "example-package" {
+		t.Fatalf("extended finding fields were not preserved: %+v", f)
+	}
+}
