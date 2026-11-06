@@ -1,88 +1,109 @@
-package kubernetes
+package inventory
 
-import "time"
+import (
+	"github.com/cloudbusket/ai-auditor/audit-engine/internal/docker"
+	k8sinventory "github.com/cloudbusket/ai-auditor/audit-engine/internal/kubernetes"
+)
 
 type Inventory struct {
-	Configured      bool      `json:"configured"`
-	Connected       bool      `json:"connected"`
-	Context         string    `json:"context,omitempty"`
-	ServerVersion   string    `json:"server_version,omitempty"`
-	PlatformVersion string    `json:"platform_version,omitempty"`
-	Error           string    `json:"error,omitempty"`
-	CollectedAt     time.Time `json:"collected_at,omitempty"`
-
-	Nodes             []Node             `json:"nodes,omitempty"`
-	Namespaces        []Namespace        `json:"namespaces,omitempty"`
-	Pods              []Pod              `json:"pods,omitempty"`
-	Deployments       []Deployment       `json:"deployments,omitempty"`
-	Services          []Service          `json:"services,omitempty"`
-	PersistentVolumes []PersistentVolume `json:"persistent_volumes,omitempty"`
-	StorageClasses    []StorageClass     `json:"storage_classes,omitempty"`
-	CollectionErrors  []string           `json:"collection_errors,omitempty"`
+	Hostname            string                  `json:"hostname"`
+	Cloud               CloudInfo               `json:"cloud,omitempty"`
+	OS                  OSInfo                  `json:"os"`
+	Kernel              KernelInfo              `json:"kernel"`
+	CPU                 CPUInfo                 `json:"cpu"`
+	Memory              MemoryInfo              `json:"memory"`
+	Disk                []DiskInfo              `json:"disk,omitempty"`
+	Network             []NetworkInfo           `json:"network,omitempty"`
+	Ports               []ListeningPort         `json:"ports,omitempty"`
+	PortCollectionError string                  `json:"port_collection_error,omitempty"`
+	Virtualization      Virtualization          `json:"virtualization,omitempty"`
+	Services            []ServiceInfo           `json:"services,omitempty"`
+	Docker              *docker.Inventory       `json:"docker,omitempty"`
+	Kubernetes          *k8sinventory.Inventory `json:"kubernetes,omitempty"`
 }
 
-type Node struct {
-	Name            string `json:"name"`
-	Status          string `json:"status"`
-	KubeletVersion  string `json:"kubelet_version,omitempty"`
-	OperatingSystem string `json:"operating_system,omitempty"`
-	Architecture    string `json:"architecture,omitempty"`
-	Ready           bool   `json:"ready"`
-	Unschedulable   bool   `json:"unschedulable"`
+type OSInfo struct {
+	Platform string `json:"platform"`
+	Version  string `json:"version"`
+	Family   string `json:"family"`
 }
 
-type Namespace struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
+type KernelInfo struct {
+	Version string `json:"version"`
+	Arch    string `json:"arch"`
 }
 
-type Pod struct {
-	Name            string `json:"name"`
-	Namespace       string `json:"namespace"`
-	Phase           string `json:"phase"`
-	NodeName        string `json:"node_name,omitempty"`
-	ReadyContainers int32  `json:"ready_containers"`
-	TotalContainers int32  `json:"total_containers"`
-	RestartCount    int32  `json:"restart_count"`
+type CPUInfo struct {
+	Model   string `json:"model"`
+	Vendor  string `json:"vendor"`
+	Cores   int    `json:"cores"`
+	Threads int    `json:"threads"`
 }
 
-type Deployment struct {
-	Name              string `json:"name"`
-	Namespace         string `json:"namespace"`
-	Replicas          int32  `json:"replicas"`
-	ReadyReplicas     int32  `json:"ready_replicas"`
-	AvailableReplicas int32  `json:"available_replicas"`
+type MemoryInfo struct {
+	TotalGB uint64 `json:"total_gb"`
 }
 
-type Service struct {
-	Name        string        `json:"name"`
-	Namespace   string        `json:"namespace"`
-	Type        string        `json:"type"`
-	ClusterIP   string        `json:"cluster_ip,omitempty"`
-	ExternalIPs []string      `json:"external_ips,omitempty"`
-	Ports       []ServicePort `json:"ports,omitempty"`
+type DiskInfo struct {
+	Device      string `json:"device"`
+	Mount       string `json:"mount"`
+	FSType      string `json:"fstype"`
+	SizeGB      uint64 `json:"size_gb"`
+	UsedGB      uint64 `json:"used_gb"`
+	FreeGB      uint64 `json:"free_gb"`
+	UsedPercent uint64 `json:"used_percent"`
 }
 
-type ServicePort struct {
-	Name       string `json:"name,omitempty"`
-	Protocol   string `json:"protocol"`
-	Port       int32  `json:"port"`
-	TargetPort string `json:"target_port,omitempty"`
-	NodePort   int32  `json:"node_port,omitempty"`
+type NetworkInfo struct {
+	Name  string   `json:"name"`
+	MAC   string   `json:"mac"`
+	MTU   int      `json:"mtu"`
+	State string   `json:"state"`
+	IPv4  []string `json:"ipv4,omitempty"`
+	IPv6  []string `json:"ipv6,omitempty"`
 }
 
-type PersistentVolume struct {
-	Name          string   `json:"name"`
-	Capacity      string   `json:"capacity,omitempty"`
-	AccessModes   []string `json:"access_modes,omitempty"`
-	ReclaimPolicy string   `json:"reclaim_policy,omitempty"`
-	Phase         string   `json:"phase"`
-	StorageClass  string   `json:"storage_class,omitempty"`
+type ListeningPort struct {
+	Protocol    string `json:"protocol"`
+	Address     string `json:"address"`
+	Port        uint32 `json:"port"`
+	ProcessName string `json:"process_name,omitempty"`
+	PID         int32  `json:"pid,omitempty"`
+	Service     string `json:"service,omitempty"`
+	BindScope   string `json:"bind_scope"`
 }
 
-type StorageClass struct {
-	Name              string `json:"name"`
-	Provisioner       string `json:"provisioner"`
-	ReclaimPolicy     string `json:"reclaim_policy,omitempty"`
-	VolumeBindingMode string `json:"volume_binding_mode,omitempty"`
+type Virtualization struct {
+	Type     string `json:"type"`
+	Vendor   string `json:"vendor,omitempty"`
+	Role     string `json:"role,omitempty"`
+	Hostname string `json:"hostname,omitempty"`
+}
+
+type CloudInfo struct {
+	Provider       string            `json:"provider,omitempty"`
+	ProjectID      string            `json:"project_id,omitempty"`
+	ProjectNumber  string            `json:"project_number,omitempty"`
+	InstanceName   string            `json:"instance_name,omitempty"`
+	InstanceID     string            `json:"instance_id,omitempty"`
+	Zone           string            `json:"zone,omitempty"`
+	Region         string            `json:"region,omitempty"`
+	MachineType    string            `json:"machine_type,omitempty"`
+	InternalIP     string            `json:"internal_ip,omitempty"`
+	ExternalIP     string            `json:"external_ip,omitempty"`
+	ServiceAccount string            `json:"service_account,omitempty"`
+	Hostname       string            `json:"hostname,omitempty"`
+	Tags           []string          `json:"tags,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+}
+
+type ServiceInfo struct {
+	Name          string `json:"name"`
+	Description   string `json:"description,omitempty"`
+	State         string `json:"state"`
+	SubState      string `json:"sub_state,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	ActiveSince   string `json:"active_since,omitempty"`
+	MainPID       int    `json:"main_pid,omitempty"`
+	MemoryCurrent string `json:"memory_current,omitempty"`
 }
