@@ -29,6 +29,7 @@ func RunHostChecks() Report {
 	checkMemory(&report)
 	checkServices(&report, inv)
 	checkDocker(&report, inv)
+	checkKubernetes(&report, inv)
 
 	return report
 }
