@@ -1,12 +1,17 @@
 package dashboard
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
+	"github.com/cloudbusket/ai-auditor/audit-engine/internal/appsec"
+	"github.com/cloudbusket/ai-auditor/audit-engine/internal/audit"
 	"github.com/cloudbusket/ai-auditor/audit-engine/internal/checks"
 	"github.com/cloudbusket/ai-auditor/audit-engine/internal/inventory"
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -19,6 +24,16 @@ func NewHandler(password string) (http.Handler, error) {
 		return nil, errors.New("dashboard password is required")
 	}
 
+	history, err := NewHistoryStore(os.Getenv("AUDITOR_HISTORY_DIR"))
+	if err != nil {
+		return nil, err
+	}
+
+	targetPath := strings.TrimSpace(os.Getenv("AUDITOR_SCAN_TARGET"))
+	if targetPath == "" {
+		targetPath = "."
+	}
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", dashboardPage)
@@ -26,7 +41,110 @@ func NewHandler(password string) (http.Handler, error) {
 	mux.HandleFunc("/api/metrics", metricsHandler)
 	mux.HandleFunc("/api/checks", checksHandler)
 
+	mux.HandleFunc("/api/scan", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if !sameOriginRequest(r) {
+			http.Error(w, "Cross-origin request rejected", http.StatusForbidden)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 6*time.Minute)
+		defer cancel()
+
+		scanner := &appsec.SnykScanner{}
+
+		report := audit.Run(ctx, scanner, audit.Config{
+			TargetPath: targetPath,
+			Timeout:    5 * time.Minute,
+		})
+
+		record, err := history.Save(report)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "Unable to save scan history",
+			})
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, record)
+	})
+
+	mux.HandleFunc("/api/history", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		summaries, err := history.List()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "Unable to read scan history",
+			})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, summaries)
+	})
+
+	mux.HandleFunc("/api/history/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		id := strings.TrimPrefix(r.URL.Path, "/api/history/")
+		if id == "" || strings.Contains(id, "/") {
+			http.NotFound(w, r)
+			return
+		}
+
+		record, err := history.Get(id)
+		if errors.Is(err, os.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			http.Error(w, "Invalid scan history request", http.StatusBadRequest)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, record)
+	})
+
 	return authenticate(password, mux), nil
+}
+
+// sameOriginRequest rejects cross-origin requests when browser origin
+// information is supplied. Non-browser clients without Origin are allowed.
+func sameOriginRequest(r *http.Request) bool {
+	if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+		return false
+	}
+
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+
+	return origin == requestOrigin(r)
+}
+
+func requestOrigin(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	} else if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+
+	return scheme + "://" + r.Host
 }
 
 // authenticate protects the dashboard and all API endpoints.
@@ -56,6 +174,7 @@ func authenticate(password string, next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
 
 		next.ServeHTTP(w, r)
 	})
@@ -69,6 +188,7 @@ func dashboardPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -80,6 +200,7 @@ func dashboardPage(w http.ResponseWriter, r *http.Request) {
 // overviewHandler returns the actual server inventory and health checks.
 func overviewHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -87,7 +208,7 @@ func overviewHandler(w http.ResponseWriter, r *http.Request) {
 	inv, err := inventory.Collect()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": err.Error(),
+			"error": "Unable to collect infrastructure inventory",
 		})
 		return
 	}
@@ -103,6 +224,7 @@ func overviewHandler(w http.ResponseWriter, r *http.Request) {
 // metricsHandler returns live CPU and memory utilization.
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -110,7 +232,7 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	cpuValues, err := cpu.Percent(500*time.Millisecond, false)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": "Unable to collect CPU metrics: " + err.Error(),
+			"error": "Unable to collect CPU metrics",
 		})
 		return
 	}
@@ -118,7 +240,7 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	vm, err := mem.VirtualMemory()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": "Unable to collect memory metrics: " + err.Error(),
+			"error": "Unable to collect memory metrics",
 		})
 		return
 	}
@@ -137,9 +259,10 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// checksHandler returns security and health findings.
+// checksHandler returns infrastructure security and health findings.
 func checksHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -211,6 +334,7 @@ h2 {
     border-radius: 12px;
     padding: 20px;
     margin-bottom: 16px;
+    overflow-x: auto;
 }
 
 .grid {
@@ -245,6 +369,7 @@ h2 {
 
 button {
     background: var(--green);
+    color: #07140a;
     border: none;
     padding: 10px 15px;
     border-radius: 7px;
@@ -252,15 +377,27 @@ button {
     cursor: pointer;
 }
 
+button:disabled {
+    opacity: .55;
+    cursor: not-allowed;
+}
+
+.secondary {
+    background: #26364d;
+    color: var(--text);
+}
+
 table {
     width: 100%;
     border-collapse: collapse;
+    min-width: 520px;
 }
 
 th, td {
     padding: 10px;
     text-align: left;
     border-bottom: 1px solid var(--border);
+    vertical-align: top;
 }
 
 th {
@@ -279,6 +416,24 @@ th {
     color: #ff7777;
 }
 
+.status {
+    text-transform: uppercase;
+    font-weight: bold;
+}
+
+.history-row {
+    cursor: pointer;
+}
+
+.history-row:hover {
+    background: #1c2b42;
+}
+
+.notice {
+    color: var(--muted);
+    margin-top: 12px;
+}
+
 @media(max-width: 600px) {
     body {
         padding: 15px;
@@ -292,14 +447,17 @@ th {
 <header>
     <div>
         <h1>CloudBusket AI Auditor</h1>
-        <div class="muted">Infrastructure Health Dashboard</div>
+        <div class="muted">Infrastructure Security & Health Dashboard</div>
     </div>
 
     <div>
         <span id="status">Connecting...</span>
-        <button onclick="refreshAll()">Refresh</button>
+        <button id="scanButton" onclick="runScan()">Run Assessment</button>
+        <button class="secondary" onclick="refreshAll()">Refresh</button>
     </div>
 </header>
+
+<div id="scanMessage" class="notice"></div>
 
 <div class="grid">
 
@@ -331,6 +489,22 @@ th {
 </div>
 
 <section class="panel">
+    <h2>Latest Assessment</h2>
+    <div id="latestAssessment" class="muted">No assessment loaded.</div>
+    <div id="moduleResults"></div>
+</section>
+
+<section class="panel">
+    <h2>Scan History</h2>
+    <div id="history">Loading scan history...</div>
+</section>
+
+<section class="panel">
+    <h2>Selected Scan Details</h2>
+    <div id="historyDetail" class="muted">Select a scan from history.</div>
+</section>
+
+<section class="panel">
     <h2>Host Inventory</h2>
     <div id="hostDetails">Loading...</div>
 </section>
@@ -356,8 +530,11 @@ th {
 </section>
 
 <script>
-async function getJSON(url) {
-    const response = await fetch(url, {cache: "no-store"});
+async function getJSON(url, options) {
+    const response = await fetch(url, {
+        cache: "no-store",
+        ...options
+    });
 
     if (!response.ok) {
         throw new Error("HTTP " + response.status);
@@ -381,6 +558,10 @@ function safe(value) {
 function setBar(id, value) {
     const percentage = Math.max(0, Math.min(100, Number(value) || 0));
     document.getElementById(id).style.width = percentage + "%";
+}
+
+function statusClass(value) {
+    return String(value || "").toLowerCase().replace(/[^a-z]/g, "");
 }
 
 function renderTable(headers, rows) {
@@ -411,18 +592,35 @@ function renderTable(headers, rows) {
     return html;
 }
 
+function renderFindings(findings) {
+    return renderTable(
+        ["ID", "Asset", "Category", "Severity", "Status", "Message", "Recommendation"],
+        (findings || []).map(function(f) {
+            return [
+                f.id,
+                f.asset || "--",
+                f.category,
+                f.severity,
+                f.status,
+                f.message,
+                f.recommendation || "--"
+            ];
+        })
+    );
+}
+
 async function refreshMetrics() {
     const data = await getJSON("/api/metrics");
 
     document.getElementById("cpu").textContent =
-        data.cpu_percent.toFixed(1) + "%";
+        Number(data.cpu_percent).toFixed(1) + "%";
 
     document.getElementById("memory").textContent =
-        data.memory_percent.toFixed(1) + "%";
+        Number(data.memory_percent).toFixed(1) + "%";
 
     document.getElementById("memoryDetail").textContent =
-        data.memory_used_gb.toFixed(1) + " GB used of " +
-        data.memory_total_gb.toFixed(1) + " GB";
+        Number(data.memory_used_gb).toFixed(1) + " GB used of " +
+        Number(data.memory_total_gb).toFixed(1) + " GB";
 
     setBar("cpuBar", data.cpu_percent);
     setBar("memoryBar", data.memory_percent);
@@ -508,20 +706,112 @@ async function refreshOverview() {
         findings.length;
 
     document.getElementById("findingDetail").textContent =
-        "Overall status: " + (report.overall_status || "Unknown");
+        "Live infrastructure status: " + (report.overall_status || "Unknown");
 
-    document.getElementById("checks").innerHTML = renderTable(
-        ["ID", "Category", "Status", "Message", "Recommendation"],
-        findings.map(function(f) {
+    document.getElementById("checks").innerHTML = renderFindings(findings);
+}
+
+async function refreshHistory() {
+    const records = await getJSON("/api/history");
+
+    if (!records.length) {
+        document.getElementById("history").innerHTML =
+            "<p class='muted'>No saved assessments yet. Run your first assessment.</p>";
+        return;
+    }
+
+    document.getElementById("history").innerHTML = renderTable(
+        ["Date", "Overall Status", "Passed", "Warnings", "Critical", "Errors", "Findings", "Action"],
+        records.map(function(item) {
             return [
-                f.id,
-                f.category,
-                f.status,
-                f.message,
-                f.recommendation || "--"
+                new Date(item.created_at).toLocaleString(),
+                item.overall_status,
+                item.summary.passed,
+                item.summary.warnings,
+                item.summary.critical,
+                item.summary.errors,
+                item.finding_count,
+                "<button class='secondary' onclick=\"event.stopPropagation(); viewScan('" +
+                    safe(item.id) + "')\">View</button>"
+            ];
+        }).map(function(row) {
+            return row;
+        })
+    );
+}
+
+async function viewScan(id) {
+    try {
+        const record = await getJSON("/api/history/" + encodeURIComponent(id));
+        const report = record.report;
+
+        document.getElementById("historyDetail").innerHTML =
+            "<p><b>Scan ID:</b> " + safe(record.id) + "</p>" +
+            "<p><b>Date:</b> " +
+            safe(new Date(record.created_at).toLocaleString()) + "</p>" +
+            "<p><b>Overall status:</b> " +
+            safe(report.overall_status) + "</p>" +
+            "<h3>Findings</h3>" +
+            renderFindings(report.findings || []);
+
+        showAssessment(report);
+    } catch (error) {
+        document.getElementById("historyDetail").textContent =
+            "Unable to load scan: " + error.message;
+    }
+}
+
+function showAssessment(report) {
+    const summary = report.summary || {};
+
+    document.getElementById("latestAssessment").textContent =
+        "Overall: " + (report.overall_status || "Unknown") +
+        " | Passed: " + (summary.passed || 0) +
+        " | Warnings: " + (summary.warnings || 0) +
+        " | Critical: " + (summary.critical || 0) +
+        " | Errors: " + (summary.errors || 0);
+
+    document.getElementById("moduleResults").innerHTML = renderTable(
+        ["Module", "Status", "Duration", "Details"],
+        (report.modules || []).map(function(module) {
+            return [
+                module.name,
+                module.status,
+                module.duration_ms + " ms",
+                module.message || "--"
             ];
         })
     );
+}
+
+async function runScan() {
+    const button = document.getElementById("scanButton");
+    const message = document.getElementById("scanMessage");
+
+    button.disabled = true;
+    button.textContent = "Assessment running...";
+    message.textContent = "Running infrastructure and application security checks. Please wait.";
+
+    try {
+        const record = await getJSON("/api/scan", {
+            method: "POST"
+        });
+
+        showAssessment(record.report);
+
+        message.textContent =
+            "Assessment saved successfully. Scan ID: " + record.id;
+
+        await Promise.all([
+            refreshHistory(),
+            refreshOverview()
+        ]);
+    } catch (error) {
+        message.textContent = "Assessment failed: " + error.message;
+    } finally {
+        button.disabled = false;
+        button.textContent = "Run Assessment";
+    }
 }
 
 async function refreshAll() {
@@ -530,12 +820,12 @@ async function refreshAll() {
     try {
         await Promise.all([
             refreshMetrics(),
-            refreshOverview()
+            refreshOverview(),
+            refreshHistory()
         ]);
 
         document.getElementById("status").textContent =
             "Connected · " + new Date().toLocaleTimeString();
-
     } catch (error) {
         document.getElementById("status").textContent =
             "Error: " + error.message;
@@ -546,6 +836,7 @@ refreshAll();
 
 setInterval(refreshMetrics, 5000);
 setInterval(refreshOverview, 30000);
+setInterval(refreshHistory, 60000);
 </script>
 
 </body>
