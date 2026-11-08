@@ -353,6 +353,17 @@ h2 {
     margin: 10px 0;
 }
 
+#hostname {
+    font-size: clamp(18px, 2vw, 25px);
+    overflow-wrap: anywhere;
+    word-break: normal;
+    line-height: 1.25;
+}
+
+.skipped {
+    color: var(--muted);
+}
+
 .bar {
     height: 8px;
     background: #26364d;
@@ -481,9 +492,29 @@ th {
     </section>
 
     <section class="panel">
-        <div class="muted">Security Findings</div>
-        <div class="metric" id="findings">--</div>
-        <div id="findingDetail" class="muted"></div>
+        <div class="muted">Total Checks</div>
+        <div class="metric" id="totalChecks">--</div>
+        <div class="muted">Latest saved assessment</div>
+    </section>
+
+    <section class="panel">
+        <div class="muted">Passed</div>
+        <div class="metric pass" id="passedChecks">--</div>
+    </section>
+
+    <section class="panel">
+        <div class="muted">Warnings</div>
+        <div class="metric warning" id="warningChecks">--</div>
+    </section>
+
+    <section class="panel">
+        <div class="muted">Critical</div>
+        <div class="metric critical" id="criticalChecks">--</div>
+    </section>
+
+    <section class="panel">
+        <div class="muted">Errors</div>
+        <div class="metric error" id="errorChecks">--</div>
     </section>
 
 </div>
@@ -701,49 +732,99 @@ async function refreshOverview() {
     }
 
     const findings = report.findings || [];
-
-    document.getElementById("findings").textContent =
-        findings.length;
-
-    document.getElementById("findingDetail").textContent =
-        "Live infrastructure status: " + (report.overall_status || "Unknown");
-
     document.getElementById("checks").innerHTML = renderFindings(findings);
 }
 
+let selectedScanId = "";
+
 async function refreshHistory() {
     const records = await getJSON("/api/history");
+    const container = document.getElementById("history");
 
-    if (!records.length) {
-        document.getElementById("history").innerHTML =
-            "<p class='muted'>No saved assessments yet. Run your first assessment.</p>";
+    container.innerHTML = "";
+
+    if (!Array.isArray(records) || records.length === 0) {
+        container.textContent =
+            "No saved assessments yet. Run your first assessment.";
         return;
     }
 
-    document.getElementById("history").innerHTML = renderTable(
-        ["Date", "Overall Status", "Passed", "Warnings", "Critical", "Errors", "Findings", "Action"],
-        records.map(function(item) {
-            return [
-                new Date(item.created_at).toLocaleString(),
-                item.overall_status,
-                item.summary.passed,
-                item.summary.warnings,
-                item.summary.critical,
-                item.summary.errors,
-                item.finding_count,
-                "<button class='secondary' onclick=\"event.stopPropagation(); viewScan('" +
-                    safe(item.id) + "')\">View</button>"
-            ];
-        }).map(function(row) {
-            return row;
-        })
-    );
+    const headers = [
+        "Date", "Overall Status", "Passed", "Warnings",
+        "Critical", "Errors", "Findings", "Action"
+    ];
+
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+
+    headers.forEach(function(label) {
+        const th = document.createElement("th");
+        th.textContent = label;
+        headerRow.appendChild(th);
+    });
+
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+
+    records.forEach(function(item) {
+        const row = document.createElement("tr");
+        const summary = item.summary || {};
+
+        const values = [
+            item.created_at
+                ? new Date(item.created_at).toLocaleString()
+                : "",
+            item.overall_status || "",
+            summary.passed ?? 0,
+            summary.warnings ?? 0,
+            summary.critical ?? 0,
+            summary.errors ?? 0,
+            item.finding_count ?? 0
+        ];
+
+        values.forEach(function(value) {
+            const cell = document.createElement("td");
+            cell.textContent = String(value);
+            row.appendChild(cell);
+        });
+
+        const actionCell = document.createElement("td");
+        const button = document.createElement("button");
+
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = "View";
+
+        button.addEventListener("click", function() {
+            viewScan(String(item.id));
+        });
+
+        actionCell.appendChild(button);
+        row.appendChild(actionCell);
+        tbody.appendChild(row);
+    });
+
+    table.appendChild(tbody);
+    container.appendChild(table);
+
+    const selectionStillExists = records.some(function(item) {
+        return String(item.id) === selectedScanId;
+    });
+
+    if ((!selectedScanId || !selectionStillExists) &&
+        records[0] && records[0].id) {
+        await viewScan(String(records[0].id));
+    }
 }
 
 async function viewScan(id) {
     try {
         const record = await getJSON("/api/history/" + encodeURIComponent(id));
         const report = record.report;
+        selectedScanId = String(record.id);
 
         document.getElementById("historyDetail").innerHTML =
             "<p><b>Scan ID:</b> " + safe(record.id) + "</p>" +
@@ -763,25 +844,48 @@ async function viewScan(id) {
 
 function showAssessment(report) {
     const summary = report.summary || {};
+    const passed = Number(summary.passed || 0);
+    const warnings = Number(summary.warnings || 0);
+    const critical = Number(summary.critical || 0);
+    const errors = Number(summary.errors || 0);
+    const total = passed + warnings + critical + errors;
+
+    document.getElementById("totalChecks").textContent = total;
+    document.getElementById("passedChecks").textContent = passed;
+    document.getElementById("warningChecks").textContent = warnings;
+    document.getElementById("criticalChecks").textContent = critical;
+    document.getElementById("errorChecks").textContent = errors;
+
+    const modules = report.modules || [];
+    const skipped = modules.filter(function(module) {
+        return String(module.status || "").toLowerCase() === "skipped";
+    }).length;
 
     document.getElementById("latestAssessment").textContent =
         "Overall: " + (report.overall_status || "Unknown") +
-        " | Passed: " + (summary.passed || 0) +
-        " | Warnings: " + (summary.warnings || 0) +
-        " | Critical: " + (summary.critical || 0) +
-        " | Errors: " + (summary.errors || 0);
+        " | Total checks: " + total +
+        " | Skipped modules: " + skipped;
 
-    document.getElementById("moduleResults").innerHTML = renderTable(
-        ["Module", "Status", "Duration", "Details"],
-        (report.modules || []).map(function(module) {
-            return [
-                module.name,
-                module.status,
-                module.duration_ms + " ms",
-                module.message || "--"
-            ];
-        })
-    );
+    let moduleHTML = "<table><thead><tr>" +
+        "<th>Module</th><th>Status</th><th>Duration</th><th>Details</th>" +
+        "</tr></thead><tbody>";
+
+    modules.forEach(function(module) {
+        const status = String(module.status || "unknown");
+        const cssClass = statusClass(status) || "skipped";
+
+        moduleHTML += "<tr>" +
+            "<td>" + safe(module.name || "--") + "</td>" +
+            "<td><span class='" + cssClass + "'>" +
+            safe(status.toUpperCase()) + "</span></td>" +
+            "<td>" + safe(module.duration_ms ?? 0) + " ms</td>" +
+            "<td>" + safe(module.message || "--") + "</td>" +
+            "</tr>";
+    });
+
+    moduleHTML += "</tbody></table>";
+    document.getElementById("moduleResults").innerHTML =
+        modules.length ? moduleHTML : "<p class='muted'>No module details available.</p>";
 }
 
 async function runScan() {
@@ -797,6 +901,7 @@ async function runScan() {
             method: "POST"
         });
 
+        selectedScanId = String(record.id);
         showAssessment(record.report);
 
         message.textContent =
