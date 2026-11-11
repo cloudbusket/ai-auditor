@@ -14,6 +14,7 @@ import (
 	"github.com/cloudbusket/ai-auditor/audit-engine/internal/audit"
 	"github.com/cloudbusket/ai-auditor/audit-engine/internal/checks"
 	"github.com/cloudbusket/ai-auditor/audit-engine/internal/inventory"
+	"github.com/cloudbusket/ai-auditor/audit-engine/internal/remediation"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 )
@@ -35,11 +36,30 @@ func NewHandler(password string) (http.Handler, error) {
 	}
 
 	mux := http.NewServeMux()
+	// Initialize AI remediation components.
+	credentials := remediation.NewMemoryCredentialStore()
 
+	openAIProvider := remediation.NewOpenAIProvider(
+		credentials,
+		"",
+		nil,
+	)
+
+	remediationService := remediation.NewService(
+		openAIProvider,
+		60*time.Second,
+	)
+	// Existing dashboard routes.
 	mux.HandleFunc("/", dashboardPage)
 	mux.HandleFunc("/api/overview", overviewHandler)
 	mux.HandleFunc("/api/metrics", metricsHandler)
 	mux.HandleFunc("/api/checks", checksHandler)
+
+	// AI provider settings.
+	mux.HandleFunc(
+		"/api/settings/ai-provider",
+		providerSettingsHandler(credentials),
+	)
 
 	mux.HandleFunc("/api/scan", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -91,8 +111,19 @@ func NewHandler(password string) (http.Handler, error) {
 
 		writeJSON(w, http.StatusOK, summaries)
 	})
-
 	mux.HandleFunc("/api/history/", func(w http.ResponseWriter, r *http.Request) {
+		// AI remediation endpoint:
+		// POST /api/history/{scanID}/findings/{findingID}/remediation
+		if strings.Contains(r.URL.Path, "/findings/") {
+			findingRemediationHandler(
+				history,
+				remediationService,
+			)(w, r)
+			return
+		}
+
+		// Existing scan-history endpoint:
+		// GET /api/history/{scanID}
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -445,6 +476,67 @@ th {
     margin-top: 12px;
 }
 
+.ai-settings {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: end;
+}
+
+.ai-settings input,
+.ai-settings textarea {
+    width: 100%;
+    padding: 11px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: #0b1220;
+    color: var(--text);
+}
+
+.ai-settings label {
+    display: block;
+    margin-bottom: 7px;
+    color: var(--muted);
+}
+
+.ai-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.remediation-card {
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 16px;
+    margin: 14px 0;
+    overflow-wrap: anywhere;
+}
+
+.remediation-card pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: #0b1220;
+    padding: 12px;
+    border-radius: 7px;
+}
+
+.remediation-card li {
+    margin: 8px 0;
+}
+
+.remediation-status {
+    margin-top: 10px;
+    color: var(--muted);
+}
+
+@media(max-width: 600px) {
+    .ai-settings {
+        grid-template-columns: 1fr;
+    }
+}
+
 @media(max-width: 600px) {
     body {
         padding: 15px;
@@ -469,6 +561,39 @@ th {
 </header>
 
 <div id="scanMessage" class="notice"></div>
+
+<section class="panel">
+    <h2>AI Remediation Provider</h2>
+    <p class="muted">
+        Configure your OpenAI API key to generate advisory remediation plans.
+        The key is held in server memory and is not stored in this browser.
+    </p>
+
+    <div id="aiProviderStatus" class="notice">
+        Checking provider configuration...
+    </div>
+
+    <div class="ai-settings">
+        <div>
+            <label for="aiAPIKey">OpenAI API key</label>
+            <input
+                id="aiAPIKey"
+                type="password"
+                autocomplete="new-password"
+                placeholder="Enter API key"
+            >
+        </div>
+
+        <div class="ai-actions">
+            <button id="saveAIKeyButton" type="button"
+                onclick="saveAIProvider()">Save key</button>
+            <button class="secondary" type="button"
+                onclick="removeAIProvider()">Remove key</button>
+        </div>
+    </div>
+
+    <div id="aiProviderMessage" class="remediation-status"></div>
+</section>
 
 <div class="grid">
 
@@ -533,6 +658,13 @@ th {
 <section class="panel">
     <h2>Selected Scan Details</h2>
     <div id="historyDetail" class="muted">Select a scan from history.</div>
+</section>
+
+<section class="panel">
+    <h2>AI Remediation Results</h2>
+    <div id="remediationResults" class="muted">
+        Select a finding from a saved scan to generate a remediation plan.
+    </div>
 </section>
 
 <section class="panel">
@@ -623,22 +755,195 @@ function renderTable(headers, rows) {
     return html;
 }
 
-function renderFindings(findings) {
-    return renderTable(
-        ["ID", "Asset", "Category", "Severity", "Status", "Message", "Recommendation"],
-        (findings || []).map(function(f) {
-            return [
-                f.id,
-                f.asset || "--",
-                f.category,
-                f.severity,
-                f.status,
-                f.message,
-                f.recommendation || "--"
-            ];
-        })
-    );
+function renderFindings(findings, allowRemediation) {
+    if (!findings || findings.length === 0) {
+        return "<p class='muted'>No findings.</p>";
+    }
+
+    let html = "<table><thead><tr>" +
+        "<th>ID</th><th>Asset</th><th>Category</th>" +
+        "<th>Severity</th><th>Status</th><th>Message</th>" +
+        "<th>Recommendation</th><th>AI Remediation</th>" +
+        "</tr></thead><tbody>";
+
+    findings.forEach(function(f) {
+        const actionable = allowRemediation && ["warning", "critical", "error"].includes(
+            String(f.status || "").toLowerCase()
+        );
+
+        html += "<tr>" +
+            "<td>" + safe(f.id) + "</td>" +
+            "<td>" + safe(f.asset || "--") + "</td>" +
+            "<td>" + safe(f.category || "--") + "</td>" +
+            "<td>" + safe(f.severity || "--") + "</td>" +
+            "<td><span class='" + statusClass(f.status) + "'>" +
+                safe(f.status || "--") + "</span></td>" +
+            "<td>" + safe(f.message || "--") + "</td>" +
+            "<td>" + safe(f.recommendation || "--") + "</td>" +
+            "<td>" + (actionable
+                ? "<button type='button' class='secondary' " +
+                  "data-remediation-finding='" + safe(f.id) + "'>" +
+                  "Generate</button>"
+                : "<span class='muted'>Not required</span>") +
+            "</td></tr>";
+    });
+
+    return html + "</tbody></table>";
 }
+
+async function refreshAIProvider() {
+    const status = document.getElementById("aiProviderStatus");
+
+    try {
+        const data = await getJSON("/api/settings/ai-provider");
+
+        status.textContent = data.configured
+            ? "OpenAI provider configured · " + (data.storage || "server-side")
+            : "OpenAI provider not configured.";
+
+    } catch (error) {
+        status.textContent = "Unable to check AI provider: " + error.message;
+    }
+}
+
+async function saveAIProvider() {
+    const input = document.getElementById("aiAPIKey");
+    const button = document.getElementById("saveAIKeyButton");
+    const message = document.getElementById("aiProviderMessage");
+    const key = input.value.trim();
+
+    if (!key) {
+        message.textContent = "Enter an API key first.";
+        return;
+    }
+
+    button.disabled = true;
+    message.textContent = "Saving API key...";
+
+    try {
+        const data = await getJSON("/api/settings/ai-provider", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({api_key: key})
+        });
+
+        input.value = "";
+        message.textContent = data.configured
+            ? "API key saved in server memory."
+            : "Provider configuration was not confirmed.";
+
+        await refreshAIProvider();
+
+    } catch (error) {
+        message.textContent = "Unable to save API key: " + error.message;
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function removeAIProvider() {
+    const message = document.getElementById("aiProviderMessage");
+
+    if (!confirm("Remove the OpenAI API key from server memory?")) {
+        return;
+    }
+
+    message.textContent = "Removing API key...";
+
+    try {
+        await getJSON("/api/settings/ai-provider", {
+            method: "DELETE"
+        });
+
+        document.getElementById("aiAPIKey").value = "";
+        message.textContent = "OpenAI API key removed.";
+        await refreshAIProvider();
+
+    } catch (error) {
+        message.textContent = "Unable to remove API key: " + error.message;
+    }
+}
+
+function renderRemediation(solution) {
+    const list = function(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+            return "<p class='muted'>None provided.</p>";
+        }
+
+        return "<ul>" + items.map(function(item) {
+            return "<li>" + safe(item) + "</li>";
+        }).join("") + "</ul>";
+    };
+
+    const steps = (solution.steps || []).map(function(step, index) {
+        return "<div class='remediation-card'>" +
+            "<h4>" + (index + 1) + ". " + safe(step.title) + "</h4>" +
+            "<p>" + safe(step.description) + "</p>" +
+            (step.command
+                ? "<pre><code>" + safe(step.command) + "</code></pre>"
+                : "") +
+            (step.impact
+                ? "<p><b>Impact:</b> " + safe(step.impact) + "</p>"
+                : "") +
+            "</div>";
+    }).join("");
+
+    return "<div class='remediation-card'>" +
+        "<p><b>Provider:</b> " + safe(solution.provider) +
+        " · <b>Model:</b> " + safe(solution.model || "Default") + "</p>" +
+        "<p><b>Confidence:</b> " + safe(solution.confidence) + "</p>" +
+        "<h3>Summary</h3><p>" + safe(solution.summary) + "</p>" +
+        "<h3>Root cause</h3><p>" + safe(solution.root_cause) + "</p>" +
+        "<h3>Risk</h3><p>" + safe(solution.risk) + "</p>" +
+        "<h3>Recommended steps</h3>" + steps +
+        "<h3>Verification</h3>" + list(solution.verification) +
+        "<h3>Rollback</h3>" + list(solution.rollback) +
+        "<h3>Assumptions</h3>" + list(solution.assumptions) +
+        "<p class='notice'>Advisory only. Review and approve all commands " +
+        "before executing them. No changes have been made to your system.</p>" +
+        "</div>";
+}
+
+async function generateRemediation(findingID) {
+    const results = document.getElementById("remediationResults");
+
+    if (!selectedScanId) {
+        results.textContent = "Select a saved scan first.";
+        return;
+    }
+
+    results.textContent = "Generating remediation plan. Please wait...";
+
+    try {
+        const url = "/api/history/" +
+            encodeURIComponent(selectedScanId) +
+            "/findings/" +
+            encodeURIComponent(findingID) +
+            "/remediation";
+
+        const solution = await getJSON(url, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({additional_context: ""})
+        });
+
+        results.innerHTML = renderRemediation(solution);
+
+    } catch (error) {
+        results.textContent =
+            "Remediation generation failed: " + error.message;
+    }
+}
+
+document.addEventListener("click", function(event) {
+    const button = event.target.closest("[data-remediation-finding]");
+
+    if (!button) {
+        return;
+    }
+
+    generateRemediation(button.dataset.remediationFinding);
+});
 
 async function refreshMetrics() {
     const data = await getJSON("/api/metrics");
@@ -833,7 +1138,7 @@ async function viewScan(id) {
             "<p><b>Overall status:</b> " +
             safe(report.overall_status) + "</p>" +
             "<h3>Findings</h3>" +
-            renderFindings(report.findings || []);
+            renderFindings(report.findings || [], true);
 
         showAssessment(report);
     } catch (error) {
@@ -938,6 +1243,7 @@ async function refreshAll() {
 }
 
 refreshAll();
+refreshAIProvider();
 
 setInterval(refreshMetrics, 5000);
 setInterval(refreshOverview, 30000);
