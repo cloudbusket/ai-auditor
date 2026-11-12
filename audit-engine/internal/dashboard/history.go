@@ -35,6 +35,7 @@ type HistorySummary struct {
 	Overall      checks.Status         `json:"overall_status"`
 	Summary      checks.Summary        `json:"summary"`
 	Modules      []checks.ModuleResult `json:"modules"`
+	Coverage     []checks.Coverage     `json:"coverage"`
 	FindingCount int                   `json:"finding_count"`
 }
 
@@ -156,15 +157,16 @@ func (s *HistoryStore) List() ([]HistorySummary, error) {
 		if err := json.Unmarshal(data, &record); err != nil || record.ID != id {
 			continue
 		}
-
 		summaries = append(summaries, HistorySummary{
 			ID:           record.ID,
 			CreatedAt:    record.CreatedAt,
 			Overall:      record.Report.OverallStatus,
 			Summary:      record.Report.Summary,
 			Modules:      record.Report.Modules,
+			Coverage:     record.Report.Coverage,
 			FindingCount: len(record.Report.Findings),
 		})
+
 	}
 
 	sort.Slice(summaries, func(i, j int) bool {

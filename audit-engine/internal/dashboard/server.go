@@ -643,11 +643,11 @@ th {
     </section>
 
 </div>
-
 <section class="panel">
     <h2>Latest Assessment</h2>
     <div id="latestAssessment" class="muted">No assessment loaded.</div>
     <div id="moduleResults"></div>
+    <div id="coverageResults"></div>
 </section>
 
 <section class="panel">
@@ -1146,7 +1146,6 @@ async function viewScan(id) {
             "Unable to load scan: " + error.message;
     }
 }
-
 function showAssessment(report) {
     const summary = report.summary || {};
     const passed = Number(summary.passed || 0);
@@ -1171,7 +1170,9 @@ function showAssessment(report) {
         " | Total checks: " + total +
         " | Skipped modules: " + skipped;
 
-    let moduleHTML = "<table><thead><tr>" +
+    // Module execution results
+    let moduleHTML = "<h3>Module Execution</h3>" +
+        "<table><thead><tr>" +
         "<th>Module</th><th>Status</th><th>Duration</th><th>Details</th>" +
         "</tr></thead><tbody>";
 
@@ -1189,58 +1190,54 @@ function showAssessment(report) {
     });
 
     moduleHTML += "</tbody></table>";
+
     document.getElementById("moduleResults").innerHTML =
-        modules.length ? moduleHTML : "<p class='muted'>No module details available.</p>";
-}
+        modules.length
+            ? moduleHTML
+            : "<h3>Module Execution</h3><p class='muted'>No module details available.</p>";
 
-async function runScan() {
-    const button = document.getElementById("scanButton");
-    const message = document.getElementById("scanMessage");
+    // Data collection coverage
+    const coverage = report.coverage || [];
 
-    button.disabled = true;
-    button.textContent = "Assessment running...";
-    message.textContent = "Running infrastructure and application security checks. Please wait.";
+    let coverageHTML = "<h3>Data Collection Coverage</h3>";
 
-    try {
-        const record = await getJSON("/api/scan", {
-            method: "POST"
+    if (coverage.length === 0) {
+        coverageHTML +=
+            "<p class='muted'>No coverage information available for this assessment.</p>";
+    } else {
+        coverageHTML +=
+            "<table><thead><tr>" +
+            "<th>Provider</th>" +
+            "<th>Category</th>" +
+            "<th>Status</th>" +
+            "<th>Resources</th>" +
+            "<th>Duration</th>" +
+            "<th>Details</th>" +
+            "</tr></thead><tbody>";
+
+        coverage.forEach(function(item) {
+            const status = String(item.status || "unknown");
+            const cssClass = statusClass(status) || "skipped";
+
+            coverageHTML += "<tr>" +
+                "<td>" + safe(item.provider || "--") + "</td>" +
+                "<td>" + safe(item.category || "--") + "</td>" +
+                "<td><span class='" + cssClass + "'>" +
+                safe(status.replace(/_/g, " ").toUpperCase()) +
+                "</span></td>" +
+                "<td>" + safe(item.resource_count ?? 0) + "</td>" +
+                "<td>" + safe(item.duration_ms ?? 0) + " ms</td>" +
+                "<td>" + safe(item.message || "--") + "</td>" +
+                "</tr>";
         });
 
-        selectedScanId = String(record.id);
-        showAssessment(record.report);
-
-        message.textContent =
-            "Assessment saved successfully. Scan ID: " + record.id;
-
-        await Promise.all([
-            refreshHistory(),
-            refreshOverview()
-        ]);
-    } catch (error) {
-        message.textContent = "Assessment failed: " + error.message;
-    } finally {
-        button.disabled = false;
-        button.textContent = "Run Assessment";
+        coverageHTML += "</tbody></table>";
     }
+
+    document.getElementById("coverageResults").innerHTML = coverageHTML;
 }
 
-async function refreshAll() {
-    document.getElementById("status").textContent = "Refreshing...";
 
-    try {
-        await Promise.all([
-            refreshMetrics(),
-            refreshOverview(),
-            refreshHistory()
-        ]);
-
-        document.getElementById("status").textContent =
-            "Connected · " + new Date().toLocaleTimeString();
-    } catch (error) {
-        document.getElementById("status").textContent =
-            "Error: " + error.message;
-    }
-}
 
 refreshAll();
 refreshAIProvider();

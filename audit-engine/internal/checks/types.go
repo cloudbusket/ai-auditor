@@ -1,6 +1,10 @@
 package checks
 
-import "time"
+import (
+	"time"
+
+	"github.com/cloudbusket/ai-auditor/audit-engine/internal/cloud"
+)
 
 type Status string
 
@@ -18,6 +22,32 @@ const (
 	ModuleSkipped   ModuleStatus = "skipped"
 	ModuleFailed    ModuleStatus = "failed"
 )
+
+// CoverageStatus describes the completeness of data collection.
+type CoverageStatus string
+
+const (
+	CoverageCompleted        CoverageStatus = "completed"
+	CoveragePartial          CoverageStatus = "partial"
+	CoveragePermissionDenied CoverageStatus = "permission_denied"
+	CoverageAPIDisabled      CoverageStatus = "api_disabled"
+	CoverageNotConfigured    CoverageStatus = "not_configured"
+	CoverageNoData           CoverageStatus = "no_data"
+	CoverageUnsupported      CoverageStatus = "unsupported"
+	CoverageError            CoverageStatus = "error"
+)
+
+// Coverage records the collection outcome for a provider resource category.
+type Coverage struct {
+	Provider      string         `json:"provider"`
+	Category      string         `json:"category"`
+	Status        CoverageStatus `json:"status"`
+	ResourceCount int64          `json:"resource_count"`
+	Message       string         `json:"message,omitempty"`
+	StartedAt     time.Time      `json:"started_at,omitempty"`
+	CompletedAt   time.Time      `json:"completed_at,omitempty"`
+	DurationMs    int64          `json:"duration_ms,omitempty"`
+}
 
 type ModuleResult struct {
 	Name        string       `json:"name"`
@@ -49,11 +79,13 @@ type Summary struct {
 }
 
 type Report struct {
-	GeneratedAt   time.Time      `json:"generated_at"`
-	OverallStatus Status         `json:"overall_status"`
-	Summary       Summary        `json:"summary"`
-	Modules       []ModuleResult `json:"modules"`
-	Findings      []Finding      `json:"findings"`
+	GeneratedAt    time.Time        `json:"generated_at"`
+	OverallStatus  Status           `json:"overall_status"`
+	Summary        Summary          `json:"summary"`
+	Modules        []ModuleResult   `json:"modules"`
+	Coverage       []Coverage       `json:"coverage"`
+	CloudInventory *cloud.Inventory `json:"cloud_inventory,omitempty"`
+	Findings       []Finding        `json:"findings"`
 }
 
 func NewReport() Report {
@@ -61,12 +93,17 @@ func NewReport() Report {
 		GeneratedAt:   time.Now().UTC(),
 		OverallStatus: StatusPass,
 		Modules:       []ModuleResult{},
+		Coverage:      []Coverage{},
 		Findings:      []Finding{},
 	}
 }
 
 func (r *Report) AddModule(module ModuleResult) {
 	r.Modules = append(r.Modules, module)
+}
+
+func (r *Report) AddCoverage(coverage Coverage) {
+	r.Coverage = append(r.Coverage, coverage)
 }
 
 func (r *Report) Add(f Finding) {

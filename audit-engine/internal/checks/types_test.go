@@ -152,3 +152,97 @@ func TestFindingJSONIncludesExtendedFields(t *testing.T) {
 		t.Fatalf("extended finding fields were not preserved: %+v", f)
 	}
 }
+
+func TestNewReportInitializesCoverage(t *testing.T) {
+	r := NewReport()
+
+	if r.Coverage == nil {
+		t.Fatal("expected initialized empty coverage")
+	}
+
+	if len(r.Coverage) != 0 {
+		t.Fatalf("expected zero coverage records, got %d", len(r.Coverage))
+	}
+}
+
+func TestAddCoverage(t *testing.T) {
+	r := NewReport()
+
+	r.AddCoverage(Coverage{
+		Provider:      "gcp",
+		Category:      "compute.instances",
+		Status:        CoverageCompleted,
+		ResourceCount: 12,
+		Message:       "Compute Engine instances collected.",
+	})
+
+	if len(r.Coverage) != 1 {
+		t.Fatalf("expected 1 coverage record, got %d", len(r.Coverage))
+	}
+
+	got := r.Coverage[0]
+
+	if got.Provider != "gcp" ||
+		got.Category != "compute.instances" ||
+		got.Status != CoverageCompleted ||
+		got.ResourceCount != 12 {
+		t.Fatalf("unexpected coverage record: %+v", got)
+	}
+}
+
+func TestCoverageDoesNotChangeSecurityStatus(t *testing.T) {
+	r := NewReport()
+
+	r.AddCoverage(Coverage{
+		Provider: "gcp",
+		Category: "billing",
+		Status:   CoveragePermissionDenied,
+		Message:  "Billing data permission is unavailable.",
+	})
+
+	if r.OverallStatus != StatusPass {
+		t.Fatalf("coverage gap must not change security status; got %q", r.OverallStatus)
+	}
+
+	if r.Summary.Warnings != 0 || r.Summary.Errors != 0 {
+		t.Fatalf("coverage gap must not create security findings: %+v", r.Summary)
+	}
+}
+
+func TestReportJSONPreservesCoverage(t *testing.T) {
+	r := NewReport()
+
+	r.AddCoverage(Coverage{
+		Provider:      "gcp",
+		Category:      "compute.instances",
+		Status:        CoverageCompleted,
+		ResourceCount: 5,
+		Message:       "Collected successfully.",
+	})
+
+	r.AddCoverage(Coverage{
+		Provider: "gcp",
+		Category: "billing",
+		Status:   CoverageAPIDisabled,
+		Message:  "Required API is disabled.",
+	})
+
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded Report
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(decoded.Coverage) != 2 {
+		t.Fatalf("expected 2 coverage records, got %d", len(decoded.Coverage))
+	}
+
+	if decoded.Coverage[0].ResourceCount != 5 ||
+		decoded.Coverage[1].Status != CoverageAPIDisabled {
+		t.Fatalf("coverage JSON was not preserved: %+v", decoded.Coverage)
+	}
+}
