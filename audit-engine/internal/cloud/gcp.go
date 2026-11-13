@@ -18,18 +18,22 @@ import (
 const (
 	gcpReadOnlyScope = "https://www.googleapis.com/auth/cloud-platform.read-only"
 
-	resourceManagerURL = "https://cloudresourcemanager.googleapis.com/v3"
-	serviceUsageURL    = "https://serviceusage.googleapis.com/v1"
-	computeAPIURL      = "https://compute.googleapis.com/compute/v1"
+	resourceManagerURL    = "https://cloudresourcemanager.googleapis.com/v3"
+	serviceUsageURL       = "https://serviceusage.googleapis.com/v1"
+	computeAPIURL         = "https://compute.googleapis.com/compute/v1"
+	iamAPIURL             = "https://iam.googleapis.com/v1"
+	resourceManagerIAMURL = "https://cloudresourcemanager.googleapis.com/v3"
 )
 
 // GCPCollector discovers GCP project metadata and enabled services.
 type GCPCollector struct {
-	HTTPClient         *http.Client
-	TokenSource        oauth2.TokenSource
-	ResourceManagerURL string
-	ServiceUsageURL    string
-	ComputeURL         string
+	HTTPClient            *http.Client
+	TokenSource           oauth2.TokenSource
+	ResourceManagerURL    string
+	ServiceUsageURL       string
+	ComputeURL            string
+	IAMResourceManagerURL string
+	IAMURL                string
 }
 
 // NewGCPCollector creates a collector using Application Default Credentials.
@@ -43,10 +47,12 @@ func NewGCPCollector(ctx context.Context) (*GCPCollector, error) {
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		TokenSource:        tokenSource,
-		ResourceManagerURL: resourceManagerURL,
-		ServiceUsageURL:    serviceUsageURL,
-		ComputeURL:         computeAPIURL,
+		TokenSource:           tokenSource,
+		ResourceManagerURL:    resourceManagerURL,
+		ServiceUsageURL:       serviceUsageURL,
+		ComputeURL:            computeAPIURL,
+		IAMResourceManagerURL: resourceManagerIAMURL,
+		IAMURL:                iamAPIURL,
 	}, nil
 }
 
@@ -67,6 +73,54 @@ type gcpServiceResponse struct {
 type gcpServicesResponse struct {
 	Services      []gcpServiceResponse `json:"services"`
 	NextPageToken string               `json:"nextPageToken"`
+}
+
+type gcpIAMPolicyRequest struct {
+	OptionsRequestedPolicyVersion int `json:"optionsRequestedPolicyVersion"`
+}
+
+type gcpIAMPolicyResponse struct {
+	Version  int    `json:"version"`
+	Etag     string `json:"etag"`
+	Bindings []struct {
+		Role      string   `json:"role"`
+		Members   []string `json:"members"`
+		Condition *struct {
+			Title       string `json:"title"`
+			Description string `json:"description"`
+			Expression  string `json:"expression"`
+		} `json:"condition"`
+	} `json:"bindings"`
+}
+
+type gcpServiceAccount struct {
+	Name           string `json:"name"`
+	ProjectID      string `json:"projectId"`
+	UniqueID       string `json:"uniqueId"`
+	Email          string `json:"email"`
+	DisplayName    string `json:"displayName"`
+	OAuth2ClientID string `json:"oauth2ClientId"`
+	Disabled       bool   `json:"disabled"`
+}
+
+type gcpServiceAccountsResponse struct {
+	Accounts      []gcpServiceAccount `json:"accounts"`
+	NextPageToken string              `json:"nextPageToken"`
+}
+
+type gcpServiceAccountKey struct {
+	Name            string `json:"name"`
+	KeyType         string `json:"keyType"`
+	KeyOrigin       string `json:"keyOrigin"`
+	ValidAfterTime  string `json:"validAfterTime"`
+	ValidBeforeTime string `json:"validBeforeTime"`
+	Disabled        bool   `json:"disabled"`
+	DisableReason   string `json:"disableReason"`
+}
+
+type gcpServiceAccountKeysResponse struct {
+	Keys          []gcpServiceAccountKey `json:"keys"`
+	NextPageToken string                 `json:"nextPageToken"`
 }
 
 type gcpAPIError struct {
@@ -178,6 +232,38 @@ func (c *GCPCollector) Discover(
 
 	inv.Coverage = append(inv.Coverage, projectCoverage)
 
+	// Project IAM policy is collected independently of service discovery.
+	iamStarted := time.Now().UTC()
+	iamURL := strings.TrimRight(c.IAMResourceManagerURL, "/")
+	if iamURL == "" {
+		iamURL = resourceManagerIAMURL
+	}
+
+	iamErr := c.collectProjectIAMPolicy(
+		ctx,
+		client,
+		iamURL,
+		inv.ProjectID,
+		&inv,
+	)
+	iamCompleted := time.Now().UTC()
+
+	iamCount := countGCPResources(inv, "gcp.iam.binding")
+	iamCoverage := Coverage{
+		Provider:      ProviderGCP,
+		Category:      "iam_policy",
+		Status:        CoverageCompleted,
+		ResourceCount: iamCount,
+		StartedAt:     iamStarted,
+		CompletedAt:   iamCompleted,
+		DurationMs:    iamCompleted.Sub(iamStarted).Milliseconds(),
+	}
+	if iamErr != nil {
+		iamCoverage.Status = classifyGCPError(iamErr)
+		iamCoverage.Message = iamErr.Error()
+	}
+	inv.Coverage = append(inv.Coverage, iamCoverage)
+
 	servicesStarted := time.Now().UTC()
 
 	serviceErr := c.collectEnabledServices(
@@ -213,6 +299,58 @@ func (c *GCPCollector) Discover(
 	}
 
 	inv.Coverage = append(inv.Coverage, serviceCoverage)
+
+	// Service-account discovery depends on the IAM API being enabled.
+	iamAPIBaseURL := strings.TrimRight(c.IAMURL, "/")
+	if iamAPIBaseURL == "" {
+		iamAPIBaseURL = iamAPIURL
+	}
+
+	saStarted := time.Now().UTC()
+	var saErr error
+	var saCount int64
+
+	if serviceErr != nil {
+		saErr = fmt.Errorf(
+			"service-account discovery skipped because enabled-service discovery was incomplete: %w",
+			serviceErr,
+		)
+	} else if !gcpServiceEnabled(inv, "iam.googleapis.com") {
+		saErr = &gcpRequestError{
+			StatusCode: http.StatusNotFound,
+			Message:    "IAM API is not enabled",
+		}
+	} else {
+		saCount, saErr = c.collectServiceAccounts(
+			ctx, client, iamAPIBaseURL, inv.ProjectID, &inv,
+		)
+	}
+
+	saCompleted := time.Now().UTC()
+	saCoverage := Coverage{
+		Provider:      ProviderGCP,
+		Category:      "iam_service_accounts",
+		Status:        CoverageCompleted,
+		ResourceCount: saCount,
+		StartedAt:     saStarted,
+		CompletedAt:   saCompleted,
+		DurationMs:    saCompleted.Sub(saStarted).Milliseconds(),
+	}
+
+	if saErr != nil {
+		saCoverage.Message = saErr.Error()
+		if serviceErr != nil {
+			saCoverage.Status = CoverageNotConfigured
+		} else if !gcpServiceEnabled(inv, "iam.googleapis.com") {
+			saCoverage.Status = CoverageAPIDisabled
+		} else if saCount > 0 {
+			saCoverage.Status = CoveragePartial
+		} else {
+			saCoverage.Status = classifyGCPError(saErr)
+		}
+	}
+
+	inv.Coverage = append(inv.Coverage, saCoverage)
 
 	// Compute discovery depends on knowing whether its API is enabled.
 	computeURL := strings.TrimRight(c.ComputeURL, "/")
@@ -320,6 +458,258 @@ func (c *GCPCollector) collectEnabledServices(
 			return nil
 		}
 	}
+}
+
+func (c *GCPCollector) collectServiceAccounts(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	projectID string,
+	inv *Inventory,
+) (int64, error) {
+	var count int64
+	pageToken := ""
+
+	for {
+		endpoint := strings.TrimRight(baseURL, "/") +
+			"/projects/" + url.PathEscape(projectID) +
+			"/serviceAccounts?pageSize=100"
+
+		if pageToken != "" {
+			endpoint += "&pageToken=" + url.QueryEscape(pageToken)
+		}
+
+		var response gcpServiceAccountsResponse
+		if err := c.getJSON(ctx, client, endpoint, &response); err != nil {
+			return count, fmt.Errorf("list GCP service accounts: %w", err)
+		}
+
+		for _, account := range response.Accounts {
+			accountID := account.Name
+			if accountID == "" {
+				accountID = account.Email
+			}
+
+			inv.Resources = append(inv.Resources, Resource{
+				ID:        accountID,
+				Name:      account.Email,
+				Type:      "gcp.iam.service_account",
+				Provider:  ProviderGCP,
+				ProjectID: projectID,
+				Properties: map[string]any{
+					"email":            account.Email,
+					"unique_id":        account.UniqueID,
+					"display_name":     account.DisplayName,
+					"disabled":         account.Disabled,
+					"oauth2_client_id": account.OAuth2ClientID,
+				},
+			})
+			count++
+		}
+
+		pageToken = response.NextPageToken
+		if pageToken == "" {
+			return count, nil
+		}
+	}
+}
+
+func (c *GCPCollector) collectServiceAccountKeys(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	projectID string,
+	inv *Inventory,
+) (int64, int64, error) {
+	var keyCount int64
+	var successfulAccounts int64
+	var failures []string
+
+	accounts := make([]Resource, 0)
+	for _, resource := range inv.Resources {
+		if resource.Type == "gcp.iam.service_account" {
+			accounts = append(accounts, resource)
+		}
+	}
+
+	for _, account := range accounts {
+		accountEmail, _ := account.Properties["email"].(string)
+		if accountEmail == "" {
+			accountEmail = account.Name
+		}
+		if accountEmail == "" {
+			failures = append(failures, "service account has no email or name")
+			continue
+		}
+
+		pageToken := ""
+
+		for {
+			endpoint := strings.TrimRight(baseURL, "/") +
+				"/projects/" + url.PathEscape(projectID) +
+				"/serviceAccounts/" + url.PathEscape(accountEmail) +
+				"/keys?keyTypes=USER_MANAGED&pageSize=100"
+
+			if pageToken != "" {
+				endpoint += "&pageToken=" + url.QueryEscape(pageToken)
+			}
+
+			var response gcpServiceAccountKeysResponse
+			if err := c.getJSON(ctx, client, endpoint, &response); err != nil {
+				failures = append(
+					failures,
+					fmt.Sprintf("list keys for %s: %v", accountEmail, err),
+				)
+				break
+			}
+
+			successfulAccounts++
+
+			for _, key := range response.Keys {
+				inv.Resources = append(inv.Resources, Resource{
+					ID:        key.Name,
+					Name:      key.Name,
+					Type:      "gcp.iam.service_account_key",
+					Provider:  ProviderGCP,
+					ProjectID: projectID,
+					Properties: map[string]any{
+						"service_account_email": accountEmail,
+						"key_type":              key.KeyType,
+						"key_origin":            key.KeyOrigin,
+						"valid_after_time":      key.ValidAfterTime,
+						"valid_before_time":     key.ValidBeforeTime,
+						"disabled":              key.Disabled,
+						"disable_reason":        key.DisableReason,
+					},
+				})
+				keyCount++
+			}
+
+			pageToken = response.NextPageToken
+			if pageToken == "" {
+				break
+			}
+		}
+	}
+
+	if len(failures) > 0 {
+		return keyCount, successfulAccounts,
+			fmt.Errorf("GCP service-account key discovery incomplete: %s",
+				strings.Join(failures, "; "))
+	}
+
+	return keyCount, successfulAccounts, nil
+}
+
+func (c *GCPCollector) collectProjectIAMPolicy(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	projectID string,
+	inv *Inventory,
+) error {
+	endpoint := strings.TrimRight(baseURL, "/") +
+		"/projects/" + url.PathEscape(projectID) + ":getIamPolicy"
+
+	requestBody := gcpIAMPolicyRequest{
+		OptionsRequestedPolicyVersion: 3,
+	}
+
+	var policy gcpIAMPolicyResponse
+	if err := c.postJSON(ctx, client, endpoint, requestBody, &policy); err != nil {
+		return fmt.Errorf("get GCP project IAM policy: %w", err)
+	}
+
+	for _, binding := range policy.Bindings {
+		properties := map[string]any{
+			"role":    binding.Role,
+			"members": binding.Members,
+		}
+		if binding.Condition != nil {
+			properties["condition"] = map[string]any{
+				"title":       binding.Condition.Title,
+				"description": binding.Condition.Description,
+				"expression":  binding.Condition.Expression,
+			}
+		}
+
+		inv.Resources = append(inv.Resources, Resource{
+			ID:         projectID + "/" + binding.Role,
+			Name:       binding.Role,
+			Type:       "gcp.iam.binding",
+			Provider:   ProviderGCP,
+			ProjectID:  projectID,
+			Properties: properties,
+		})
+	}
+
+	return nil
+}
+
+func (c *GCPCollector) postJSON(
+	ctx context.Context,
+	client *http.Client,
+	endpoint string,
+	body any,
+	destination any,
+) error {
+	token, err := c.TokenSource.Token()
+	if err != nil {
+		return fmt.Errorf("obtain GCP access token: %w", err)
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("encode GCP request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		endpoint,
+		strings.NewReader(string(payload)),
+	)
+	if err != nil {
+		return fmt.Errorf("create GCP request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("GCP API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var apiErr gcpAPIError
+		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil {
+			message := apiErr.Error.Message
+			if message == "" {
+				message = resp.Status
+			}
+			reason := ""
+			if len(apiErr.Error.Errors) > 0 {
+				reason = apiErr.Error.Errors[0].Reason
+			}
+			return &gcpRequestError{
+				StatusCode: resp.StatusCode,
+				Reason:     reason,
+				Message:    message,
+			}
+		}
+		return &gcpRequestError{
+			StatusCode: resp.StatusCode,
+			Message:    resp.Status,
+		}
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(destination); err != nil {
+		return fmt.Errorf("decode GCP API response: %w", err)
+	}
+	return nil
 }
 
 func (c *GCPCollector) getJSON(
