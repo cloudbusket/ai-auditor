@@ -8,13 +8,15 @@ import (
 	"time"
 
 	"github.com/cloudbusket/ai-auditor/audit-engine/internal/audit"
+	"github.com/cloudbusket/ai-auditor/audit-engine/internal/cloud"
 	"github.com/spf13/cobra"
 )
 
 var (
-	scanTarget  string
-	scanFormat  string
-	scanTimeout time.Duration
+	scanTarget       string
+	scanFormat       string
+	scanTimeout      time.Duration
+	scanCloudProject string
 )
 
 var scanCmd = &cobra.Command{
@@ -45,9 +47,23 @@ security checks and combine their findings into one audit report.`,
 			return err
 		}
 
+		var cloudCollector cloud.Collector
+
+		if strings.TrimSpace(scanCloudProject) != "" {
+			collector, err := cloud.NewGCPCollector(ctx)
+			if err != nil {
+				return fmt.Errorf("initialize GCP cloud collector: %w", err)
+			}
+			cloudCollector = collector
+		}
+
 		report := audit.Run(ctx, scanner, audit.Config{
-			TargetPath: scanTarget,
-			Timeout:    scanTimeout,
+			TargetPath:     scanTarget,
+			Timeout:        scanTimeout,
+			CloudCollector: cloudCollector,
+			CloudConfig: cloud.Config{
+				ProjectID: strings.TrimSpace(scanCloudProject),
+			},
 		})
 
 		switch strings.ToLower(scanFormat) {
@@ -108,9 +124,30 @@ security checks and combine their findings into one audit report.`,
 }
 
 func init() {
-	scanCmd.Flags().StringVar(&scanTarget, "target", ".", "Application project directory to scan")
-	scanCmd.Flags().StringVar(&scanFormat, "format", "text", "Output format: text or json")
-	scanCmd.Flags().DurationVar(&scanTimeout, "timeout", 5*time.Minute, "Maximum application scanner execution time")
+	scanCmd.Flags().StringVar(
+		&scanTarget,
+		"target",
+		".",
+		"Application project directory to scan",
+	)
+	scanCmd.Flags().StringVar(
+		&scanFormat,
+		"format",
+		"text",
+		"Output format: text or json",
+	)
+	scanCmd.Flags().DurationVar(
+		&scanTimeout,
+		"timeout",
+		5*time.Minute,
+		"Maximum application scanner execution time",
+	)
+	scanCmd.Flags().StringVar(
+		&scanCloudProject,
+		"cloud-project",
+		"",
+		"GCP project ID to include in the cloud discovery assessment",
+	)
 
 	rootCmd.AddCommand(scanCmd)
 }
