@@ -3,6 +3,7 @@ package dashboard
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -82,5 +83,46 @@ func TestNewHandlerRejectsInvalidAuthentication(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestDashboardPageIncludesRequiredJavaScriptHandlers(t *testing.T) {
+	t.Setenv("AUDITOR_HISTORY_DIR", t.TempDir())
+
+	password := "test-dashboard-password-123"
+
+	handler, err := NewHandler(password)
+	if err != nil {
+		t.Fatalf("NewHandler returned error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.SetBasicAuth("auditor", password)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected dashboard page status 200, got %d", rec.Code)
+	}
+
+	page := rec.Body.String()
+
+	required := []string{
+		`async function refreshAll()`,
+		`async function runScan()`,
+		`onclick="refreshAll()"`,
+		`onclick="runScan()"`,
+		`refreshAll();`,
+		`setInterval(function()`,
+		`refreshMetrics().catch`,
+		`refreshOverview().catch`,
+		`refreshHistory().catch`,
+	}
+
+	for _, fragment := range required {
+		if !strings.Contains(page, fragment) {
+			t.Errorf("dashboard page is missing required JavaScript or HTML: %q", fragment)
+		}
 	}
 }

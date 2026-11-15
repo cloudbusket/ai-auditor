@@ -72,9 +72,9 @@ func TestGCPDiscoverSuccess(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode IAM policy request: %v", err)
 			}
-			if request.OptionsRequestedPolicyVersion != 3 {
+			if request.Options.RequestedPolicyVersion != 3 {
 				t.Errorf("expected IAM policy version 3, got %d",
-					request.OptionsRequestedPolicyVersion)
+					request.Options.RequestedPolicyVersion)
 			}
 
 			writeJSON(w, http.StatusOK, gcpIAMPolicyResponse{
@@ -122,6 +122,19 @@ func TestGCPDiscoverSuccess(t *testing.T) {
 						"disabled":       false,
 					},
 				},
+			})
+
+		case r.URL.Path == "/iam/v1/projects/test-project/serviceAccounts/test-sa@test-project.iam.gserviceaccount.com/keys":
+			if r.URL.Query().Get("keyTypes") != "USER_MANAGED" {
+				t.Errorf("expected USER_MANAGED keys, got %q",
+					r.URL.Query().Get("keyTypes"))
+			}
+			if r.URL.Query().Get("pageSize") != "100" {
+				t.Errorf("expected key page size 100, got %q",
+					r.URL.Query().Get("pageSize"))
+			}
+			writeJSON(w, http.StatusOK, gcpServiceAccountKeysResponse{
+				Keys: []gcpServiceAccountKey{},
 			})
 
 		case r.URL.Path == "/compute/v1/projects/test-project/aggregated/instances":
@@ -241,16 +254,26 @@ func TestGCPDiscoverSuccess(t *testing.T) {
 		}
 	}
 
-	if len(inv.Coverage) != 6 {
-		t.Fatalf("expected 6 coverage records, got %d", len(inv.Coverage))
+	if len(inv.Coverage) != 7 {
+		t.Fatalf("expected 7 coverage records, got %d", len(inv.Coverage))
 	}
 
+	keyCoverageFound := false
+
 	for _, coverage := range inv.Coverage {
+		if coverage.Category == "iam_service_account_keys" {
+			keyCoverageFound = true
+		}
+
 		if coverage.Status != CoverageCompleted {
 			t.Errorf("expected completed coverage for %s, got %s",
 				coverage.Category, coverage.Status)
 		}
 	}
+	if !keyCoverageFound {
+		t.Error("expected iam_service_account_keys coverage")
+	}
+
 }
 
 func TestGCPDiscoverPermissionDenied(t *testing.T) {
@@ -266,9 +289,9 @@ func TestGCPDiscoverPermissionDenied(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode IAM policy request: %v", err)
 			}
-			if request.OptionsRequestedPolicyVersion != 3 {
+			if request.Options.RequestedPolicyVersion != 3 {
 				t.Errorf("expected IAM policy version 3, got %d",
-					request.OptionsRequestedPolicyVersion)
+					request.Options.RequestedPolicyVersion)
 			}
 
 			writeJSON(w, http.StatusOK, gcpIAMPolicyResponse{
@@ -336,9 +359,9 @@ func TestGCPDiscoverDisabledAPI(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode IAM policy request: %v", err)
 			}
-			if request.OptionsRequestedPolicyVersion != 3 {
+			if request.Options.RequestedPolicyVersion != 3 {
 				t.Errorf("expected IAM policy version 3, got %d",
-					request.OptionsRequestedPolicyVersion)
+					request.Options.RequestedPolicyVersion)
 			}
 
 			writeJSON(w, http.StatusOK, gcpIAMPolicyResponse{
@@ -398,9 +421,9 @@ func TestGCPDiscoverPartialPagination(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode IAM policy request: %v", err)
 			}
-			if request.OptionsRequestedPolicyVersion != 3 {
+			if request.Options.RequestedPolicyVersion != 3 {
 				t.Errorf("expected IAM policy version 3, got %d",
-					request.OptionsRequestedPolicyVersion)
+					request.Options.RequestedPolicyVersion)
 			}
 
 			writeJSON(w, http.StatusOK, gcpIAMPolicyResponse{
@@ -852,5 +875,288 @@ func TestGCPDiscoverServiceAccountsPermissionDenied(t *testing.T) {
 
 	if !strings.Contains(coverage.Message, "service account access denied") {
 		t.Errorf("expected permission error message, got %q", coverage.Message)
+	}
+}
+
+func TestGCPCollectServiceAccountKeysPagination(t *testing.T) {
+	pageRequests := 0
+
+	email := "test-sa@test-project.iam.gserviceaccount.com"
+	expectedPath := "/iam/v1/projects/test-project/serviceAccounts/" + email + "/keys"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Errorf("unexpected authorization header: %q", r.Header.Get("Authorization"))
+		}
+
+		if r.URL.Path != expectedPath {
+			http.NotFound(w, r)
+			return
+		}
+
+		if r.URL.Query().Get("keyTypes") != "USER_MANAGED" {
+			t.Errorf("expected USER_MANAGED keys, got %q", r.URL.Query().Get("keyTypes"))
+		}
+
+		if r.URL.Query().Get("pageSize") != "100" {
+			t.Errorf("expected pageSize 100, got %q", r.URL.Query().Get("pageSize"))
+		}
+
+		pageRequests++
+
+		switch r.URL.Query().Get("pageToken") {
+		case "":
+			writeJSON(w, http.StatusOK, gcpServiceAccountKeysResponse{
+				Keys: []gcpServiceAccountKey{
+					{
+						Name:            "projects/test-project/serviceAccounts/" + email + "/keys/key-1",
+						KeyType:         "USER_MANAGED",
+						KeyOrigin:       "USER_PROVIDED",
+						ValidAfterTime:  "2026-01-01T00:00:00Z",
+						ValidBeforeTime: "2027-01-01T00:00:00Z",
+						Disabled:        false,
+					},
+				},
+				NextPageToken: "page-2",
+			})
+
+		case "page-2":
+			writeJSON(w, http.StatusOK, gcpServiceAccountKeysResponse{
+				Keys: []gcpServiceAccountKey{
+					{
+						Name:            "projects/test-project/serviceAccounts/" + email + "/keys/key-2",
+						KeyType:         "USER_MANAGED",
+						KeyOrigin:       "GOOGLE_PROVIDED",
+						ValidAfterTime:  "2026-02-01T00:00:00Z",
+						ValidBeforeTime: "2027-02-01T00:00:00Z",
+						Disabled:        true,
+						DisableReason:   "USER_INITIATED",
+					},
+				},
+			})
+
+		default:
+			t.Errorf("unexpected page token: %q", r.URL.Query().Get("pageToken"))
+			http.Error(w, "unexpected page token", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	collector := newTestGCPCollector(server)
+
+	inv := Inventory{
+		Provider:  ProviderGCP,
+		ProjectID: "test-project",
+		Resources: []Resource{
+			{
+				ID:       "service-account-1",
+				Name:     email,
+				Type:     "gcp.iam.service_account",
+				Provider: ProviderGCP,
+				Properties: map[string]any{
+					"email": email,
+				},
+			},
+		},
+	}
+
+	count, successfulAccounts, err := collector.collectServiceAccountKeys(
+		context.Background(),
+		server.Client(),
+		server.URL+"/iam/v1",
+		"test-project",
+		&inv,
+	)
+	if err != nil {
+		t.Fatalf("key collection failed: %v", err)
+	}
+
+	if count != 2 {
+		t.Fatalf("expected 2 keys, got %d", count)
+	}
+
+	if successfulAccounts != 1 {
+		t.Fatalf("expected 1 successful account, got %d", successfulAccounts)
+	}
+
+	if pageRequests != 2 {
+		t.Fatalf("expected 2 page requests, got %d", pageRequests)
+	}
+
+	if len(inv.Resources) != 3 {
+		t.Fatalf("expected 1 service account and 2 keys, got %d resources", len(inv.Resources))
+	}
+
+	first := inv.Resources[1]
+	if first.Type != "gcp.iam.service_account_key" {
+		t.Fatalf("unexpected first key resource type: %s", first.Type)
+	}
+
+	expectedFirst := map[string]any{
+		"service_account_email": email,
+		"key_type":              "USER_MANAGED",
+		"key_origin":            "USER_PROVIDED",
+		"valid_after_time":      "2026-01-01T00:00:00Z",
+		"valid_before_time":     "2027-01-01T00:00:00Z",
+		"disabled":              false,
+		"disable_reason":        "",
+	}
+
+	for key, want := range expectedFirst {
+		if got := first.Properties[key]; got != want {
+			t.Errorf("first key property %q: expected %v, got %v", key, want, got)
+		}
+	}
+
+	second := inv.Resources[2]
+	if second.Properties["disabled"] != true {
+		t.Error("expected second key to be disabled")
+	}
+
+	if second.Properties["disable_reason"] != "USER_INITIATED" {
+		t.Errorf("unexpected disable reason: %v", second.Properties["disable_reason"])
+	}
+}
+
+func TestGCPCollectServiceAccountKeysPartialFailure(t *testing.T) {
+	firstEmail := "first@test-project.iam.gserviceaccount.com"
+	secondEmail := "second@test-project.iam.gserviceaccount.com"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, firstEmail) {
+			writeGCPError(w, http.StatusForbidden, "forbidden", "first account key access denied")
+			return
+		}
+
+		if strings.Contains(r.URL.Path, secondEmail) {
+			writeJSON(w, http.StatusOK, gcpServiceAccountKeysResponse{
+				Keys: []gcpServiceAccountKey{
+					{
+						Name:      "projects/test-project/serviceAccounts/" + secondEmail + "/keys/key-2",
+						KeyType:   "USER_MANAGED",
+						KeyOrigin: "GOOGLE_PROVIDED",
+					},
+				},
+			})
+			return
+		}
+
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	collector := newTestGCPCollector(server)
+
+	inv := Inventory{
+		Provider:  ProviderGCP,
+		ProjectID: "test-project",
+		Resources: []Resource{
+			{
+				Name:     firstEmail,
+				Type:     "gcp.iam.service_account",
+				Provider: ProviderGCP,
+				Properties: map[string]any{
+					"email": firstEmail,
+				},
+			},
+			{
+				Name:     secondEmail,
+				Type:     "gcp.iam.service_account",
+				Provider: ProviderGCP,
+				Properties: map[string]any{
+					"email": secondEmail,
+				},
+			},
+		},
+	}
+
+	count, successfulAccounts, err := collector.collectServiceAccountKeys(
+		context.Background(),
+		server.Client(),
+		server.URL+"/iam/v1",
+		"test-project",
+		&inv,
+	)
+
+	if err == nil {
+		t.Fatal("expected partial collection error")
+	}
+
+	if !strings.Contains(err.Error(), "first account key access denied") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+
+	if classifyGCPError(err) != CoveragePermissionDenied {
+		t.Errorf("expected permission_denied classification, got %s",
+			classifyGCPError(err))
+	}
+
+	if count != 1 {
+		t.Errorf("expected 1 successfully collected key, got %d", count)
+	}
+
+	if successfulAccounts != 1 {
+		t.Errorf("expected 1 successful account, got %d", successfulAccounts)
+	}
+
+	if len(inv.Resources) != 3 {
+		t.Fatalf("expected 2 accounts and 1 key, got %d resources", len(inv.Resources))
+	}
+
+	if inv.Resources[2].Type != "gcp.iam.service_account_key" {
+		t.Errorf("expected successful key resource to be preserved, got %s",
+			inv.Resources[2].Type)
+	}
+}
+
+func TestGCPCollectServiceAccountKeysEmpty(t *testing.T) {
+	email := "empty@test-project.iam.gserviceaccount.com"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, gcpServiceAccountKeysResponse{
+			Keys: []gcpServiceAccountKey{},
+		})
+	}))
+	defer server.Close()
+
+	collector := newTestGCPCollector(server)
+
+	inv := Inventory{
+		Provider:  ProviderGCP,
+		ProjectID: "test-project",
+		Resources: []Resource{
+			{
+				Name:     email,
+				Type:     "gcp.iam.service_account",
+				Provider: ProviderGCP,
+				Properties: map[string]any{
+					"email": email,
+				},
+			},
+		},
+	}
+
+	count, successfulAccounts, err := collector.collectServiceAccountKeys(
+		context.Background(),
+		server.Client(),
+		server.URL+"/iam/v1",
+		"test-project",
+		&inv,
+	)
+
+	if err != nil {
+		t.Fatalf("empty key collection should succeed: %v", err)
+	}
+
+	if count != 0 {
+		t.Errorf("expected zero keys, got %d", count)
+	}
+
+	if successfulAccounts != 1 {
+		t.Errorf("expected 1 successfully inspected account, got %d", successfulAccounts)
+	}
+
+	if len(inv.Resources) != 1 {
+		t.Errorf("expected only the service account resource, got %d resources", len(inv.Resources))
 	}
 }

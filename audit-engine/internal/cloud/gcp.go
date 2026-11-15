@@ -76,7 +76,9 @@ type gcpServicesResponse struct {
 }
 
 type gcpIAMPolicyRequest struct {
-	OptionsRequestedPolicyVersion int `json:"optionsRequestedPolicyVersion"`
+	Options struct {
+		RequestedPolicyVersion int `json:"requestedPolicyVersion"`
+	} `json:"options"`
 }
 
 type gcpIAMPolicyResponse struct {
@@ -352,6 +354,86 @@ func (c *GCPCollector) Discover(
 
 	inv.Coverage = append(inv.Coverage, saCoverage)
 
+	// Collect metadata for user-managed service-account keys.
+	keysStarted := time.Now().UTC()
+	var keyCount int64
+	var successfulKeyAccounts int64
+	var keyErr error
+	keyStatus := CoverageCompleted
+
+	switch {
+	case serviceErr != nil:
+		keyErr = fmt.Errorf(
+			"service-account key discovery skipped because enabled-service discovery was incomplete: %w",
+			serviceErr,
+		)
+		keyStatus = CoverageNotConfigured
+
+	case !gcpServiceEnabled(inv, "iam.googleapis.com"):
+		keyErr = &gcpRequestError{
+			StatusCode: http.StatusNotFound,
+			Message:    "IAM API is not enabled",
+		}
+		keyStatus = CoverageAPIDisabled
+
+	case saErr != nil && saCount == 0:
+		keyErr = fmt.Errorf(
+			"service-account key discovery skipped because service-account discovery failed: %w",
+			saErr,
+		)
+		keyStatus = classifyGCPError(saErr)
+
+	case saCount == 0:
+		keyStatus = CoverageNoData
+
+	default:
+		keyCount, successfulKeyAccounts, keyErr = c.collectServiceAccountKeys(
+			ctx, client, iamAPIBaseURL, inv.ProjectID, &inv,
+		)
+
+		if saErr != nil {
+			if keyErr != nil {
+				keyErr = fmt.Errorf(
+					"%v; service-account inventory was also incomplete: %w",
+					keyErr,
+					saErr,
+				)
+			} else {
+				keyErr = fmt.Errorf(
+					"service-account inventory was incomplete: %w",
+					saErr,
+				)
+			}
+		}
+	}
+
+	keysCompleted := time.Now().UTC()
+	keyCoverage := Coverage{
+		Provider:      ProviderGCP,
+		Category:      "iam_service_account_keys",
+		Status:        keyStatus,
+		ResourceCount: keyCount,
+		StartedAt:     keysStarted,
+		CompletedAt:   keysCompleted,
+		DurationMs:    keysCompleted.Sub(keysStarted).Milliseconds(),
+	}
+
+	if keyErr != nil {
+		keyCoverage.Message = keyErr.Error()
+
+		if keyStatus != CoverageNotConfigured &&
+			keyStatus != CoverageAPIDisabled &&
+			keyStatus != CoverageNoData {
+			if successfulKeyAccounts > 0 || (saErr != nil && saCount > 0) {
+				keyCoverage.Status = CoveragePartial
+			} else {
+				keyCoverage.Status = classifyGCPError(keyErr)
+			}
+		}
+	}
+
+	inv.Coverage = append(inv.Coverage, keyCoverage)
+
 	// Compute discovery depends on knowing whether its API is enabled.
 	computeURL := strings.TrimRight(c.ComputeURL, "/")
 	if computeURL == "" {
@@ -523,7 +605,7 @@ func (c *GCPCollector) collectServiceAccountKeys(
 ) (int64, int64, error) {
 	var keyCount int64
 	var successfulAccounts int64
-	var failures []string
+	var failures []error
 
 	accounts := make([]Resource, 0)
 	for _, resource := range inv.Resources {
@@ -538,11 +620,12 @@ func (c *GCPCollector) collectServiceAccountKeys(
 			accountEmail = account.Name
 		}
 		if accountEmail == "" {
-			failures = append(failures, "service account has no email or name")
+			failures = append(failures, errors.New("service account has no email or name"))
 			continue
 		}
 
 		pageToken := ""
+		accountFailed := false
 
 		for {
 			endpoint := strings.TrimRight(baseURL, "/") +
@@ -558,12 +641,11 @@ func (c *GCPCollector) collectServiceAccountKeys(
 			if err := c.getJSON(ctx, client, endpoint, &response); err != nil {
 				failures = append(
 					failures,
-					fmt.Sprintf("list keys for %s: %v", accountEmail, err),
+					fmt.Errorf("list keys for %s: %w", accountEmail, err),
 				)
+				accountFailed = true
 				break
 			}
-
-			successfulAccounts++
 
 			for _, key := range response.Keys {
 				inv.Resources = append(inv.Resources, Resource{
@@ -590,12 +672,16 @@ func (c *GCPCollector) collectServiceAccountKeys(
 				break
 			}
 		}
+
+		if !accountFailed {
+			successfulAccounts++
+		}
 	}
 
 	if len(failures) > 0 {
 		return keyCount, successfulAccounts,
-			fmt.Errorf("GCP service-account key discovery incomplete: %s",
-				strings.Join(failures, "; "))
+			fmt.Errorf("GCP service-account key discovery incomplete: %w",
+				errors.Join(failures...))
 	}
 
 	return keyCount, successfulAccounts, nil
@@ -611,9 +697,8 @@ func (c *GCPCollector) collectProjectIAMPolicy(
 	endpoint := strings.TrimRight(baseURL, "/") +
 		"/projects/" + url.PathEscape(projectID) + ":getIamPolicy"
 
-	requestBody := gcpIAMPolicyRequest{
-		OptionsRequestedPolicyVersion: 3,
-	}
+	requestBody := gcpIAMPolicyRequest{}
+	requestBody.Options.RequestedPolicyVersion = 3
 
 	var policy gcpIAMPolicyResponse
 	if err := c.postJSON(ctx, client, endpoint, requestBody, &policy); err != nil {

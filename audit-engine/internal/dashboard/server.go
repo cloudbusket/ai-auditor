@@ -1238,13 +1238,92 @@ function showAssessment(report) {
 }
 
 
+async function refreshAll() {
+    const status = document.getElementById("status");
+    status.textContent = "Refreshing dashboard...";
+
+    const results = await Promise.allSettled([
+        refreshMetrics(),
+        refreshOverview(),
+        refreshHistory(),
+        refreshAIProvider()
+    ]);
+
+    const failed = results.filter(function(result) {
+        return result.status === "rejected";
+    });
+
+    if (failed.length > 0) {
+        status.textContent =
+            "Connected · " + failed.length + " section(s) need attention";
+        status.title = failed.map(function(result) {
+            return result.reason
+                ? result.reason.message
+                : "Unknown refresh error";
+        }).join("; ");
+    } else {
+        status.textContent = "Connected";
+        status.title = "All dashboard sections refreshed successfully.";
+    }
+}
+
+async function runScan() {
+    const button = document.getElementById("scanButton");
+    const message = document.getElementById("scanMessage");
+    const status = document.getElementById("status");
+
+    button.disabled = true;
+    message.textContent = "Assessment running. Please wait...";
+    status.textContent = "Assessment in progress...";
+
+    try {
+        const record = await getJSON("/api/scan", {
+            method: "POST"
+        });
+
+        message.textContent =
+            "Assessment completed and saved. Refreshing dashboard...";
+
+        await refreshAll();
+
+        if (record && record.id) {
+            message.textContent =
+                "Assessment completed and saved. Scan ID: " + record.id;
+        }
+    } catch (error) {
+        message.textContent = "Assessment failed: " + error.message;
+        status.textContent = "Assessment failed";
+        status.title = error.message;
+    } finally {
+        button.disabled = false;
+    }
+}
 
 refreshAll();
-refreshAIProvider();
 
-setInterval(refreshMetrics, 5000);
-setInterval(refreshOverview, 30000);
-setInterval(refreshHistory, 60000);
+setInterval(function() {
+    refreshMetrics().catch(function(error) {
+        document.getElementById("status").textContent =
+            "Metrics refresh failed";
+        document.getElementById("status").title = error.message;
+    });
+}, 5000);
+
+setInterval(function() {
+    refreshOverview().catch(function(error) {
+        document.getElementById("status").textContent =
+            "Inventory refresh failed";
+        document.getElementById("status").title = error.message;
+    });
+}, 30000);
+
+setInterval(function() {
+    refreshHistory().catch(function(error) {
+        document.getElementById("status").textContent =
+            "History refresh failed";
+        document.getElementById("status").title = error.message;
+    });
+}, 60000);
 </script>
 
 </body>
