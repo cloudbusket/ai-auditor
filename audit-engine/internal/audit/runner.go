@@ -147,6 +147,7 @@ func runCloudDiscovery(
 	// Preserve any inventory and coverage returned, even if discovery
 	// reports an error.
 	report.CloudInventory = &inventory
+	checks.RunGCPChecks(report, inventory)
 
 	for _, item := range inventory.Coverage {
 		report.AddCoverage(checks.Coverage{
