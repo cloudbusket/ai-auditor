@@ -129,9 +129,8 @@ func TestGCPDiscoverSuccess(t *testing.T) {
 				t.Errorf("expected USER_MANAGED keys, got %q",
 					r.URL.Query().Get("keyTypes"))
 			}
-			if r.URL.Query().Get("pageSize") != "100" {
-				t.Errorf("expected key page size 100, got %q",
-					r.URL.Query().Get("pageSize"))
+			if r.URL.Query().Has("pageSize") {
+				t.Errorf("unexpected pageSize parameter on key-list request: %q", r.URL.Query().Get("pageSize"))
 			}
 			writeJSON(w, http.StatusOK, gcpServiceAccountKeysResponse{
 				Keys: []gcpServiceAccountKey{},
@@ -555,7 +554,7 @@ func TestGCPCollectServiceAccountsPagination(t *testing.T) {
 		}
 
 		if r.URL.Query().Get("pageSize") != "100" {
-			t.Errorf("expected pageSize 100, got %q", r.URL.Query().Get("pageSize"))
+			t.Errorf("expected service account pageSize 100, got %q", r.URL.Query().Get("pageSize"))
 		}
 
 		pageRequests++
@@ -898,8 +897,8 @@ func TestGCPCollectServiceAccountKeysPagination(t *testing.T) {
 			t.Errorf("expected USER_MANAGED keys, got %q", r.URL.Query().Get("keyTypes"))
 		}
 
-		if r.URL.Query().Get("pageSize") != "100" {
-			t.Errorf("expected pageSize 100, got %q", r.URL.Query().Get("pageSize"))
+		if r.URL.Query().Has("pageSize") {
+			t.Errorf("unexpected pageSize parameter on key-list request: %q", r.URL.Query().Get("pageSize"))
 		}
 
 		pageRequests++

@@ -631,7 +631,7 @@ func (c *GCPCollector) collectServiceAccountKeys(
 			endpoint := strings.TrimRight(baseURL, "/") +
 				"/projects/" + url.PathEscape(projectID) +
 				"/serviceAccounts/" + url.PathEscape(accountEmail) +
-				"/keys?keyTypes=USER_MANAGED&pageSize=100"
+				"/keys?keyTypes=USER_MANAGED"
 
 			if pageToken != "" {
 				endpoint += "&pageToken=" + url.QueryEscape(pageToken)
