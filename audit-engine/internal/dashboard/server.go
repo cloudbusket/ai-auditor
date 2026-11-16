@@ -446,6 +446,86 @@ th {
     color: var(--muted);
 }
 
+.finding-details {
+    min-width: 125px;
+}
+
+.finding-details summary {
+    color: var(--green);
+    cursor: pointer;
+    font-weight: bold;
+    padding: 5px 0;
+}
+
+.finding-details summary:focus-visible {
+    outline: 2px solid var(--green);
+    outline-offset: 4px;
+    border-radius: 3px;
+}
+
+.finding-detail-content {
+    min-width: 260px;
+    max-width: 620px;
+    padding: 12px;
+    margin-top: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #0b1220;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.finding-detail-content section + section {
+    border-top: 1px solid var(--border);
+    margin-top: 12px;
+    padding-top: 8px;
+}
+
+.finding-detail-content h4 {
+    margin: 4px 0 8px;
+    color: var(--muted);
+}
+
+.finding-detail-content p {
+    line-height: 1.5;
+    margin: 6px 0;
+}
+
+.evidence-list {
+    margin: 6px 0;
+    padding-left: 20px;
+}
+
+dl.evidence-list {
+    padding: 0;
+}
+
+.evidence-entry {
+    margin: 8px 0;
+}
+
+.evidence-entry dt {
+    color: var(--muted);
+    font-weight: bold;
+    margin-bottom: 3px;
+}
+
+.evidence-entry dd {
+    margin: 0 0 0 10px;
+}
+
+.evidence-value {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+@media(max-width: 600px) {
+    .finding-detail-content {
+        min-width: 220px;
+        max-width: 75vw;
+    }
+}
+
 .pass {
     color: #7bd88f;
 }
@@ -755,6 +835,105 @@ function renderTable(headers, rows) {
     return html;
 }
 
+function isSensitiveEvidenceKey(key) {
+    return /password|passwd|secret|token|credential|private.?key|api.?key|access.?key|authorization|cookie|client.?secret/i.test(
+        String(key || "")
+    );
+}
+
+function renderEvidenceValue(value, depth) {
+    depth = depth || 0;
+
+    if (value === null || value === undefined) {
+        return "<span class='muted'>Not available</span>";
+    }
+
+    if (depth >= 5) {
+        return "<span class='muted'>Nested evidence omitted (depth limit).</span>";
+    }
+
+    if (Array.isArray(value)) {
+        if (value.length === 0) {
+            return "<span class='muted'>Empty</span>";
+        }
+
+        return "<ul class='evidence-list'>" +
+            value.map(function(item) {
+                return "<li>" + renderEvidenceValue(item, depth + 1) + "</li>";
+            }).join("") +
+            "</ul>";
+    }
+
+    if (typeof value === "object") {
+        const keys = Object.keys(value);
+
+        if (keys.length === 0) {
+            return "<span class='muted'>Empty</span>";
+        }
+
+        return "<dl class='evidence-list'>" +
+            keys.map(function(key) {
+                const label = safe(key);
+
+                const rendered = isSensitiveEvidenceKey(key)
+                    ? "<span class='muted'>[REDACTED]</span>"
+                    : renderEvidenceValue(value[key], depth + 1);
+
+                return "<div class='evidence-entry'>" +
+                    "<dt>" + label + "</dt>" +
+                    "<dd>" + rendered + "</dd>" +
+                    "</div>";
+            }).join("") +
+            "</dl>";
+    }
+
+    let text = String(value);
+
+    if (text.length > 4000) {
+        text = text.slice(0, 4000) + " … [truncated]";
+    }
+
+    return "<span class='evidence-value'>" + safe(text) + "</span>";
+}
+
+function renderFindingDetails(finding) {
+    const description = finding.description
+        ? "<p>" + safe(finding.description) + "</p>"
+        : "<p class='muted'>No additional explanation was recorded for this finding.</p>";
+
+    const evidence = finding.evidence &&
+        typeof finding.evidence === "object" &&
+        Object.keys(finding.evidence).length > 0
+        ? renderEvidenceValue(finding.evidence, 0)
+        : "<p class='muted'>No technical evidence was recorded.</p>";
+
+    const recommendation = finding.recommendation
+        ? "<p>" + safe(finding.recommendation) + "</p>"
+        : "<p class='muted'>No recommendation was provided.</p>";
+
+    return "<details class='finding-details'>" +
+        "<summary>View Details</summary>" +
+        "<div class='finding-detail-content'>" +
+            "<section>" +
+                "<h4>What happened?</h4>" +
+                description +
+            "</section>" +
+            "<section>" +
+                "<h4>Affected asset</h4>" +
+                "<p>" + safe(finding.asset || "Not identified") + "</p>" +
+            "</section>" +
+            "<section>" +
+                "<h4>Technical evidence</h4>" +
+                evidence +
+            "</section>" +
+            "<section>" +
+                "<h4>Recommended action</h4>" +
+                recommendation +
+            "</section>" +
+        "</div>" +
+        "</details>";
+}
+
 function renderFindings(findings, allowRemediation) {
     if (!findings || findings.length === 0) {
         return "<p class='muted'>No findings.</p>";
@@ -763,7 +942,7 @@ function renderFindings(findings, allowRemediation) {
     let html = "<table><thead><tr>" +
         "<th>ID</th><th>Asset</th><th>Category</th>" +
         "<th>Severity</th><th>Status</th><th>Message</th>" +
-        "<th>Recommendation</th><th>AI Remediation</th>" +
+        "<th>Recommendation</th><th>Details</th><th>AI Remediation</th>" +
         "</tr></thead><tbody>";
 
     findings.forEach(function(f) {
@@ -780,6 +959,7 @@ function renderFindings(findings, allowRemediation) {
                 safe(f.status || "--") + "</span></td>" +
             "<td>" + safe(f.message || "--") + "</td>" +
             "<td>" + safe(f.recommendation || "--") + "</td>" +
+            "<td>" + renderFindingDetails(f) + "</td>" +
             "<td>" + (actionable
                 ? "<button type='button' class='secondary' " +
                   "data-remediation-finding='" + safe(f.id) + "'>" +
