@@ -13,6 +13,7 @@ import (
 	"github.com/cloudbusket/ai-auditor/audit-engine/internal/appsec"
 	"github.com/cloudbusket/ai-auditor/audit-engine/internal/audit"
 	"github.com/cloudbusket/ai-auditor/audit-engine/internal/checks"
+	"github.com/cloudbusket/ai-auditor/audit-engine/internal/cloud"
 	"github.com/cloudbusket/ai-auditor/audit-engine/internal/inventory"
 	"github.com/cloudbusket/ai-auditor/audit-engine/internal/remediation"
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -34,6 +35,8 @@ func NewHandler(password string) (http.Handler, error) {
 	if targetPath == "" {
 		targetPath = "."
 	}
+
+	cloudProjectID := strings.TrimSpace(os.Getenv("AUDITOR_GCP_PROJECT_ID"))
 
 	mux := http.NewServeMux()
 	// Initialize AI remediation components.
@@ -78,9 +81,21 @@ func NewHandler(password string) (http.Handler, error) {
 
 		scanner := &appsec.SnykScanner{}
 
+		var cloudCollector cloud.Collector
+		if cloudProjectID != "" {
+			collector, err := cloud.NewGCPCollector(ctx)
+			if err == nil {
+				cloudCollector = collector
+			}
+		}
+
 		report := audit.Run(ctx, scanner, audit.Config{
-			TargetPath: targetPath,
-			Timeout:    5 * time.Minute,
+			TargetPath:     targetPath,
+			Timeout:        5 * time.Minute,
+			CloudCollector: cloudCollector,
+			CloudConfig: cloud.Config{
+				ProjectID: cloudProjectID,
+			},
 		})
 
 		record, err := history.Save(report)
@@ -741,6 +756,13 @@ dl.evidence-list {
 </section>
 
 <section class="panel">
+    <h2>Cloud Inventory</h2>
+    <div id="cloudInventory" class="muted">
+        Select a scan to view its cloud inventory.
+    </div>
+</section>
+
+<section class="panel">
     <h2>AI Remediation Results</h2>
     <div id="remediationResults" class="muted">
         Select a finding from a saved scan to generate a remediation plan.
@@ -1305,11 +1327,196 @@ async function refreshHistory() {
     }
 }
 
+let selectedCloudResources = [];
+
+function renderCloudResourceRows(query) {
+    const container = document.getElementById("cloudResourceResults");
+    if (!container) return;
+
+    const term = String(query || "").trim().toLowerCase();
+
+    const filtered = selectedCloudResources.filter(function(resource) {
+        let searchable = [
+            resource.id,
+            resource.name,
+            resource.type,
+            resource.provider,
+            resource.project_id,
+            resource.region,
+            resource.zone
+        ].join(" ");
+
+        try {
+            searchable += " " + JSON.stringify(resource.labels || {});
+            searchable += " " + JSON.stringify(resource.properties || {});
+        } catch (_) {
+            // Keep the basic resource fields searchable if serialization fails.
+        }
+
+        return searchable.toLowerCase().includes(term);
+    });
+
+    if (filtered.length === 0) {
+        container.innerHTML = "<p class='muted'>No matching cloud resources.</p>";
+        return;
+    }
+
+    const displayLimit = 200;
+    const displayed = filtered.slice(0, displayLimit);
+
+    let html = "<p class='muted'>Showing " +
+        displayed.length + " of " + filtered.length + " matching resources.</p>";
+
+    html += "<table><thead><tr>" +
+        "<th>Resource</th><th>Type</th><th>Region / Zone</th><th>Details</th>" +
+        "</tr></thead><tbody>";
+
+    displayed.forEach(function(resource) {
+        const details = {
+            id: resource.id || "",
+            name: resource.name || "",
+            type: resource.type || "",
+            provider: resource.provider || "",
+            project_id: resource.project_id || "",
+            region: resource.region || "",
+            zone: resource.zone || "",
+            labels: resource.labels || {},
+            properties: resource.properties || {}
+        };
+
+        html += "<tr>" +
+            "<td>" + safe(resource.name || resource.id || "--") + "</td>" +
+            "<td>" + safe(resource.type || "--") + "</td>" +
+            "<td>" + safe([resource.region, resource.zone].filter(Boolean).join(" / ") || "--") + "</td>" +
+            "<td><details class='finding-details'>" +
+                "<summary>View resource details</summary>" +
+                "<div class='finding-detail-content'>" +
+                    renderEvidenceValue(details, 0) +
+                "</div>" +
+            "</details></td>" +
+            "</tr>";
+    });
+
+    html += "</tbody></table>";
+
+    if (filtered.length > displayLimit) {
+        html += "<p class='muted'>Refine the search to view additional resources.</p>";
+    }
+
+    container.innerHTML = html;
+}
+
+function renderCloudInventory(inventory) {
+    const container = document.getElementById("cloudInventory");
+    if (!container) return;
+
+    selectedCloudResources = [];
+
+    if (!inventory || typeof inventory !== "object") {
+        container.innerHTML =
+            "<p class='muted'>No cloud inventory was collected for this scan.</p>" +
+            "<p class='muted'>For a new GCP assessment, configure " +
+            "<code>AUDITOR_GCP_PROJECT_ID</code> and Application Default Credentials " +
+            "before starting the dashboard.</p>";
+        return;
+    }
+
+    const resources = Array.isArray(inventory.resources)
+        ? inventory.resources
+        : [];
+
+    const coverage = Array.isArray(inventory.coverage)
+        ? inventory.coverage
+        : [];
+
+    selectedCloudResources = resources;
+
+    const countsByType = new Map();
+
+    resources.forEach(function(resource) {
+        const type = String(resource.type || "unknown");
+        countsByType.set(type, (countsByType.get(type) || 0) + 1);
+    });
+
+    let html = "<div class='metrics'>" +
+        "<div class='metric'><span>Provider</span><strong>" +
+            safe(inventory.provider || "Unknown") + "</strong></div>" +
+        "<div class='metric'><span>Project / Account</span><strong>" +
+            safe(inventory.project_id || inventory.account_id || "--") + "</strong></div>" +
+        "<div class='metric'><span>Total resources</span><strong>" +
+            resources.length + "</strong></div>" +
+        "<div class='metric'><span>Coverage categories</span><strong>" +
+            coverage.length + "</strong></div>" +
+        "</div>";
+
+    html += "<h3>Collection Coverage</h3>";
+
+    if (coverage.length === 0) {
+        html += "<p class='muted'>No cloud collection coverage details were recorded.</p>";
+    } else {
+        html += "<table><thead><tr>" +
+            "<th>Category</th><th>Status</th><th>Resources</th>" +
+            "<th>Duration</th><th>Message</th>" +
+            "</tr></thead><tbody>";
+
+        coverage.forEach(function(item) {
+            const status = String(item.status || "unknown");
+            const cssClass = statusClass(status) || "muted";
+
+            html += "<tr>" +
+                "<td>" + safe(item.category || "--") + "</td>" +
+                "<td><span class='" + cssClass + "'>" +
+                    safe(status.replace(/_/g, " ").toUpperCase()) +
+                "</span></td>" +
+                "<td>" + safe(item.resource_count ?? 0) + "</td>" +
+                "<td>" + safe(item.duration_ms ?? 0) + " ms</td>" +
+                "<td>" + safe(item.message || "--") + "</td>" +
+                "</tr>";
+        });
+
+        html += "</tbody></table>";
+    }
+
+    html += "<h3>Resources by Type</h3>";
+
+    if (countsByType.size === 0) {
+        html += "<p class='muted'>No cloud resources were discovered.</p>";
+    } else {
+        html += "<table><thead><tr><th>Resource type</th><th>Count</th>" +
+            "</tr></thead><tbody>";
+
+        countsByType.forEach(function(count, type) {
+            html += "<tr><td>" + safe(type) + "</td><td>" +
+                count + "</td></tr>";
+        });
+
+        html += "</tbody></table>";
+    }
+
+    html += "<h3>Discovered Resources</h3>" +
+        "<label for='cloudResourceSearch'>Filter by name, ID, type, region, or properties</label>" +
+        "<input id='cloudResourceSearch' type='search' " +
+        "placeholder='Search cloud resources...' autocomplete='off'>" +
+        "<div id='cloudResourceResults'></div>";
+
+    container.innerHTML = html;
+
+    const search = document.getElementById("cloudResourceSearch");
+    if (search) {
+        search.addEventListener("input", function() {
+            renderCloudResourceRows(search.value);
+        });
+    }
+
+    renderCloudResourceRows("");
+}
+
 async function viewScan(id) {
     try {
         const record = await getJSON("/api/history/" + encodeURIComponent(id));
         const report = record.report;
         selectedScanId = String(record.id);
+        renderCloudInventory(report.cloud_inventory);
 
         document.getElementById("historyDetail").innerHTML =
             "<p><b>Scan ID:</b> " + safe(record.id) + "</p>" +

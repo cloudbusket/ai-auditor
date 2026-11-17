@@ -79,6 +79,123 @@ func TestRunGCPChecksPrivilegedIAMBindings(t *testing.T) {
 	}
 }
 
+func TestRunGCPChecksPublicIAM(t *testing.T) {
+	tests := []struct {
+		name     string
+		role     string
+		member   string
+		status   Status
+		severity string
+	}{
+		{"allUsers viewer", "roles/viewer", "allUsers", StatusWarning, "high"},
+		{"allAuthenticatedUsers viewer", "roles/viewer", "allAuthenticatedUsers", StatusWarning, "high"},
+		{"public owner", "roles/owner", "allUsers", StatusCritical, "critical"},
+		{"public editor", "roles/editor", "allAuthenticatedUsers", StatusCritical, "critical"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inv := gcpTestInventory()
+			inv.Resources = []cloud.Resource{
+				{
+					Type: "gcp.iam.binding",
+					Properties: map[string]any{
+						"role":    tt.role,
+						"members": []string{tt.member},
+					},
+				},
+			}
+
+			report := NewReport()
+			RunGCPChecks(&report, inv)
+
+			var finding *Finding
+			for i := range report.Findings {
+				if report.Findings[i].ID == "GCP003" {
+					finding = &report.Findings[i]
+					break
+				}
+			}
+
+			if finding == nil {
+				t.Fatalf("expected GCP003 finding; got %+v", report.Findings)
+			}
+			if finding.Status != tt.status {
+				t.Errorf("expected status %s, got %s", tt.status, finding.Status)
+			}
+			if finding.Severity != tt.severity {
+				t.Errorf("expected severity %s, got %s", tt.severity, finding.Severity)
+			}
+			if finding.Evidence["role"] != tt.role {
+				t.Errorf("expected role %s, got %v", tt.role, finding.Evidence["role"])
+			}
+
+			principals, ok := finding.Evidence["public_principals"].([]string)
+			if !ok || len(principals) != 1 || principals[0] != tt.member {
+				t.Errorf("unexpected public principal evidence: %v", finding.Evidence["public_principals"])
+			}
+		})
+	}
+}
+
+func TestRunGCPChecksPublicIAMPreservesCondition(t *testing.T) {
+	inv := gcpTestInventory()
+	condition := map[string]any{
+		"title":      "Limited access",
+		"expression": "request.time < timestamp('2027-01-01T00:00:00Z')",
+	}
+	inv.Resources = []cloud.Resource{
+		{
+			Type: "gcp.iam.binding",
+			Properties: map[string]any{
+				"role":      "roles/viewer",
+				"members":   []string{"user:reader@example.com", "allUsers"},
+				"condition": condition,
+			},
+		},
+	}
+
+	report := NewReport()
+	RunGCPChecks(&report, inv)
+
+	for _, finding := range report.Findings {
+		if finding.ID == "GCP003" {
+			if finding.Evidence["condition"] == nil {
+				t.Error("expected IAM condition in evidence")
+			}
+			return
+		}
+	}
+
+	t.Fatal("expected GCP003 finding")
+}
+
+func TestRunGCPChecksIgnoresNonPublicIAMMembers(t *testing.T) {
+	inv := gcpTestInventory()
+	inv.Resources = []cloud.Resource{
+		{
+			Type: "gcp.iam.binding",
+			Properties: map[string]any{
+				"role": "roles/viewer",
+				"members": []string{
+					"user:reader@example.com",
+					"serviceAccount:app@test-project.iam.gserviceaccount.com",
+					"group:admins@example.com",
+				},
+			},
+		},
+	}
+
+	report := NewReport()
+	RunGCPChecks(&report, inv)
+
+	for _, finding := range report.Findings {
+		if finding.ID == "GCP003" {
+			t.Errorf("unexpected public IAM finding: %+v", finding)
+		}
+	}
+}
+
 func TestRunGCPChecksActiveServiceAccountKeys(t *testing.T) {
 	inv := gcpTestInventory()
 	inv.Resources = []cloud.Resource{

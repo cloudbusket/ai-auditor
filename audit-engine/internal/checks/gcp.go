@@ -18,6 +18,7 @@ func RunGCPChecks(report *Report, inv cloud.Inventory) {
 
 	if coverageComplete(inv, "iam_policy", false) {
 		checkGCPProjectIAM(report, inv)
+		checkGCPPublicIAM(report, inv)
 	}
 
 	if coverageComplete(inv, "iam_service_account_keys", true) {
@@ -96,6 +97,76 @@ func checkGCPProjectIAM(report *Report, inv cloud.Inventory) {
 				"This finding identifies the binding for review; it does not by itself prove that access is inappropriate.",
 			Recommendation: "Review each listed member and confirm the access is required. Prefer narrower predefined or custom roles, " +
 				"least-privilege resource scopes, and conditional bindings where appropriate.",
+			Evidence: evidence,
+		})
+	}
+}
+
+func checkGCPPublicIAM(report *Report, inv cloud.Inventory) {
+	publicPrincipals := map[string]bool{
+		"allUsers":              true,
+		"allAuthenticatedUsers": true,
+	}
+
+	for _, resource := range inv.Resources {
+		if resource.Type != "gcp.iam.binding" {
+			continue
+		}
+
+		role, _ := resource.Properties["role"].(string)
+		role = strings.TrimSpace(role)
+
+		members, _ := resource.Properties["members"].([]string)
+		var exposed []string
+
+		for _, member := range members {
+			member = strings.TrimSpace(member)
+			if publicPrincipals[member] {
+				exposed = append(exposed, member)
+			}
+		}
+
+		if len(exposed) == 0 {
+			continue
+		}
+
+		status := StatusWarning
+		severity := "high"
+
+		if role == "roles/owner" || role == "roles/editor" {
+			status = StatusCritical
+			severity = "critical"
+		}
+
+		evidence := map[string]any{
+			"project_id":          inv.ProjectID,
+			"role":                role,
+			"public_principals":   exposed,
+			"public_member_count": len(exposed),
+		}
+
+		if condition, ok := resource.Properties["condition"]; ok {
+			evidence["condition"] = condition
+		}
+
+		report.Add(Finding{
+			ID:       "GCP003",
+			Source:   "gcp",
+			Category: "iam",
+			Asset:    inv.ProjectID,
+			Status:   status,
+			Severity: severity,
+			Message: fmt.Sprintf(
+				"Project IAM grants %s to %d public principal(s)",
+				role,
+				len(exposed),
+			),
+			Description: "The IAM binding includes allUsers or allAuthenticatedUsers. " +
+				"This can expose the granted permissions beyond the intended identities. " +
+				"Conditional bindings must be reviewed together with their expressions.",
+			Recommendation: "Review whether public access is explicitly required. Remove public principals " +
+				"where they are unnecessary, prefer specific identities, and verify any IAM condition " +
+				"before changing the binding.",
 			Evidence: evidence,
 		})
 	}
