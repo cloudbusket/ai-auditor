@@ -1,0 +1,54 @@
+#!/bin/bash
+set -e
+
+APP_DIR="/home/tapas/cloudbusket-ai-auditor/ai-auditor/audit-engine"
+HISTORY_DIR="/var/lib/auditor/dashboard-history"
+LOG_FILE="/var/log/auditor-dashboard.log"
+
+cd "$APP_DIR"
+
+if pgrep -f '^./bin/auditor dashboard$' >/dev/null; then
+    echo "Dashboard is already running."
+    echo "Stop it first before starting another instance."
+    exit 1
+fi
+
+if [ ! -x ./bin/auditor ]; then
+    echo "Dashboard binary not found. Build it first."
+    exit 1
+fi
+
+mkdir -p "$HISTORY_DIR"
+chmod 700 "$HISTORY_DIR"
+
+read -rsp "Enter dashboard password: " DASHBOARD_PASSWORD
+echo
+
+if [ -z "$DASHBOARD_PASSWORD" ]; then
+    echo "Password cannot be empty."
+    exit 1
+fi
+
+nohup env \
+    AUDITOR_GCP_PROJECT_ID="jamduna" \
+    AUDITOR_DASHBOARD_PASSWORD="$DASHBOARD_PASSWORD" \
+    AUDITOR_HISTORY_DIR="$HISTORY_DIR" \
+    ./bin/auditor dashboard \
+    > "$LOG_FILE" 2>&1 < /dev/null &
+
+PID=$!
+unset DASHBOARD_PASSWORD
+
+sleep 2
+
+if kill -0 "$PID" 2>/dev/null; then
+    echo "Dashboard started successfully."
+    echo "PID: $PID"
+    echo "GCP project: jamduna"
+    echo "URL: https://auditor.cloudbusket.com:8443"
+    echo "Logs: $LOG_FILE"
+else
+    echo "Dashboard failed to start. Recent log:"
+    tail -40 "$LOG_FILE"
+    exit 1
+fi
