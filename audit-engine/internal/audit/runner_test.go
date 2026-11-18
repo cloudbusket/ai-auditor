@@ -272,3 +272,185 @@ func TestRunCloudProjectWithoutCollector(t *testing.T) {
 		t.Error("expected no inventory without a collector")
 	}
 }
+
+func TestRunAWSCloudDiscoveryProducesPublicIPFinding(t *testing.T) {
+	collector := &testCloudCollector{
+		inventory: cloud.Inventory{
+			Provider:  cloud.ProviderAWS,
+			AccountID: "123456789012",
+			Resources: []cloud.Resource{
+				{
+					ID:       "i-0123456789abcdef0",
+					Name:     "web-server",
+					Type:     "aws.ec2.instance",
+					Provider: cloud.ProviderAWS,
+					Region:   "ap-southeast-2",
+					Zone:     "ap-southeast-2a",
+					Properties: map[string]any{
+						"public_ip":         "203.0.113.10",
+						"instance_type":     "t3.small",
+						"state":             "running",
+						"vpc_id":            "vpc-123",
+						"subnet_id":         "subnet-123",
+						"security_groups":   []string{"sg-123"},
+						"availability_zone": "ap-southeast-2a",
+					},
+				},
+			},
+			Coverage: []cloud.Coverage{
+				{
+					Provider:      cloud.ProviderAWS,
+					Category:      "ec2_instances",
+					Status:        cloud.CoverageCompleted,
+					ResourceCount: 1,
+				},
+			},
+		},
+	}
+
+	report := Run(
+		context.Background(),
+		&testAppSecScanner{},
+		Config{
+			TargetPath:     ".",
+			CloudCollector: collector,
+		},
+	)
+
+	if collector.calls != 1 {
+		t.Fatalf("expected one collector call, got %d", collector.calls)
+	}
+
+	if report.CloudInventory == nil {
+		t.Fatal("expected AWS inventory to be preserved")
+	}
+
+	if report.CloudInventory.Provider != cloud.ProviderAWS {
+		t.Errorf("expected AWS provider, got %q", report.CloudInventory.Provider)
+	}
+
+	if report.CloudInventory.AccountID != "123456789012" {
+		t.Errorf("unexpected account ID: %q", report.CloudInventory.AccountID)
+	}
+
+	if len(report.CloudInventory.Resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(report.CloudInventory.Resources))
+	}
+
+	if len(report.Coverage) != 1 {
+		t.Fatalf("expected 1 coverage entry, got %d", len(report.Coverage))
+	}
+
+	if report.Coverage[0].Provider != string(cloud.ProviderAWS) {
+		t.Errorf("expected AWS coverage, got %q", report.Coverage[0].Provider)
+	}
+
+	if report.Coverage[0].Category != "ec2_instances" {
+		t.Errorf("unexpected coverage category: %q", report.Coverage[0].Category)
+	}
+
+	var awsFinding *checks.Finding
+
+	for i := range report.Findings {
+		if report.Findings[i].ID == "AWS001" {
+			awsFinding = &report.Findings[i]
+			break
+		}
+	}
+
+	if awsFinding == nil {
+		t.Fatalf("expected AWS001 finding in final report, got %+v", report.Findings)
+	}
+
+	if awsFinding.Status != checks.StatusWarning {
+		t.Errorf("expected AWS warning, got %q", awsFinding.Status)
+	}
+
+	if awsFinding.Asset != "i-0123456789abcdef0" {
+		t.Errorf("unexpected finding asset: %q", awsFinding.Asset)
+	}
+
+	if awsFinding.Evidence["public_ip"] != "203.0.113.10" {
+		t.Errorf("expected public IP evidence, got %v", awsFinding.Evidence["public_ip"])
+	}
+
+	if report.Summary.Warnings == 0 {
+		t.Error("expected warning count in final report summary")
+	}
+
+	module := findModule(t, report, "cloud_discovery")
+
+	if module.Status != checks.ModuleCompleted {
+		t.Errorf("expected completed cloud discovery, got %q", module.Status)
+	}
+}
+
+func TestRunAWSCloudDiscoveryCoverageGapSuppressesFinding(t *testing.T) {
+	collector := &testCloudCollector{
+		inventory: cloud.Inventory{
+			Provider: cloud.ProviderAWS,
+			Resources: []cloud.Resource{
+				{
+					ID:       "i-partial",
+					Name:     "partially-discovered-server",
+					Type:     "aws.ec2.instance",
+					Provider: cloud.ProviderAWS,
+					Properties: map[string]any{
+						"public_ip": "203.0.113.10",
+					},
+				},
+			},
+			Coverage: []cloud.Coverage{
+				{
+					Provider: cloud.ProviderAWS,
+					Category: "ec2_instances",
+					Status:   cloud.CoveragePartial,
+					Message:  "Some EC2 instances could not be collected",
+				},
+			},
+		},
+	}
+
+	report := Run(
+		context.Background(),
+		&testAppSecScanner{},
+		Config{
+			TargetPath:     ".",
+			CloudCollector: collector,
+		},
+	)
+
+	for _, finding := range report.Findings {
+		if finding.ID == "AWS001" {
+			t.Errorf("AWS001 should be suppressed for partial coverage: %+v", finding)
+		}
+	}
+
+	if report.CloudInventory == nil {
+		t.Fatal("expected partial AWS inventory to be preserved")
+	}
+
+	if len(report.CloudInventory.Resources) != 1 {
+		t.Errorf("expected partial resource to be preserved, got %d",
+			len(report.CloudInventory.Resources))
+	}
+
+	if len(report.Coverage) != 1 {
+		t.Fatalf("expected coverage information, got %d entries", len(report.Coverage))
+	}
+
+	if report.Coverage[0].Status != checks.CoveragePartial {
+		t.Errorf("expected partial coverage, got %q", report.Coverage[0].Status)
+	}
+
+	module := findModule(t, report, "cloud_discovery")
+
+	if module.Status != checks.ModuleCompleted {
+		t.Errorf("expected discovery module completed despite coverage gap, got %q",
+			module.Status)
+	}
+
+	if !strings.Contains(module.Message, "coverage gaps") {
+		t.Errorf("expected coverage gap message, got %q", module.Message)
+	}
+}

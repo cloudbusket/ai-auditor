@@ -147,7 +147,20 @@ func runCloudDiscovery(
 	// Preserve any inventory and coverage returned, even if discovery
 	// reports an error.
 	report.CloudInventory = &inventory
-	checks.RunGCPChecks(report, inventory)
+	switch inventory.Provider {
+	case cloud.ProviderGCP:
+		checks.RunGCPChecks(report, inventory)
+
+	case cloud.ProviderAWS:
+		checks.RunAWSChecks(report, inventory)
+
+	case cloud.ProviderAzure:
+		// Azure security checks will be implemented separately.
+
+	default:
+		// Unknown providers retain their inventory and coverage,
+		// but no provider-specific checks are executed.
+	}
 
 	for _, item := range inventory.Coverage {
 		report.AddCoverage(checks.Coverage{
