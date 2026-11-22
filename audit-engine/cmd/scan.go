@@ -17,6 +17,7 @@ var (
 	scanFormat       string
 	scanTimeout      time.Duration
 	scanCloudProject string
+	scanFailOn       string
 )
 
 var scanCmd = &cobra.Command{
@@ -27,6 +28,9 @@ security checks and combine their findings into one audit report.`,
 
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
+		if err := validateFailOnThreshold(scanFailOn); err != nil {
+			return err
+		}
 
 		if !strings.EqualFold(scanFormat, "json") &&
 			!strings.EqualFold(scanFormat, "text") {
@@ -67,12 +71,18 @@ security checks and combine their findings into one audit report.`,
 		})
 
 		report.Normalize()
+		policyBreached, err := shouldFailOn(report, scanFailOn)
+		if err != nil {
+			return err
+		}
 
 		switch strings.ToLower(scanFormat) {
 		case "json":
 			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
-			return enc.Encode(report)
+			if err := enc.Encode(report); err != nil {
+				return err
+			}
 
 		case "text":
 			out := cmd.OutOrStdout()
@@ -118,7 +128,17 @@ security checks and combine their findings into one audit report.`,
 			}
 
 			fmt.Fprintf(out, "\nTotal findings: %d\n", len(report.Findings))
-			return nil
+
+		}
+
+		if policyBreached {
+			return &exitCodeError{
+				code: 2,
+				message: fmt.Sprintf(
+					"Security policy failed: findings meet the --fail-on %s threshold.",
+					strings.ToLower(strings.TrimSpace(scanFailOn)),
+				),
+			}
 		}
 
 		return nil
@@ -149,6 +169,12 @@ func init() {
 		"cloud-project",
 		"",
 		"GCP project ID to include in the cloud discovery assessment",
+	)
+	scanCmd.Flags().StringVar(
+		&scanFailOn,
+		"fail-on",
+		"none",
+		"Fail with exit code 2 when findings meet this severity threshold (none, critical, high, medium, low)",
 	)
 
 	rootCmd.AddCommand(scanCmd)

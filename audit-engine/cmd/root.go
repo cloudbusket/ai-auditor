@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -32,6 +33,12 @@ Documentation: https://cloudbusket.com
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		var exitErr *exitCodeError
+		if errors.As(err, &exitErr) {
+			fmt.Fprintln(os.Stderr, exitErr.Error())
+			os.Exit(exitErr.code)
+		}
+
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
