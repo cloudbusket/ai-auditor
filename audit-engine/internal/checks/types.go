@@ -60,6 +60,7 @@ type ModuleResult struct {
 
 type Finding struct {
 	ID             string         `json:"id"`
+	Fingerprint    string         `json:"fingerprint,omitempty"`
 	Source         string         `json:"source"`
 	Category       string         `json:"category"`
 	Asset          string         `json:"asset,omitempty"`

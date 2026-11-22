@@ -77,6 +77,8 @@ func (s *HistoryStore) Save(report checks.Report) (HistoryRecord, error) {
 		report.GeneratedAt = now
 	}
 
+	report.Normalize()
+
 	record := HistoryRecord{
 		ID:        hex.EncodeToString(randomID[:]),
 		CreatedAt: now,

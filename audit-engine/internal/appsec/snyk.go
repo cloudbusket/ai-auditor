@@ -3,6 +3,7 @@ package appsec
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -98,16 +99,38 @@ func (s *SnykScanner) Scan(
 
 	result.Vulnerabilities = normalizeSnykVulnerabilities(snykOutput)
 
-	if commandErr != nil && len(result.Vulnerabilities) == 0 {
+	if !isSuccessfulSnykExit(commandErr, len(result.Vulnerabilities)) {
 		result.Error = strings.TrimSpace(string(output))
-		return result, fmt.Errorf(
-			"Snyk scan failed: %w",
-			commandErr,
-		)
+
+		if result.Error == "" {
+			var exitErr *exec.ExitError
+			if errors.As(commandErr, &exitErr) {
+				result.Error = strings.TrimSpace(string(exitErr.Stderr))
+			}
+		}
+
+		if result.Error == "" {
+			result.Error = commandErr.Error()
+		}
+
+		return result, fmt.Errorf("Snyk scan failed: %w", commandErr)
 	}
 
 	result.Success = true
 	return result, nil
+}
+
+// isSuccessfulSnykExit accepts normal success (exit code 0) and
+// Snyk's vulnerability-found exit code (1) when findings are present.
+func isSuccessfulSnykExit(commandErr error, vulnerabilityCount int) bool {
+	if commandErr == nil {
+		return true
+	}
+
+	var exitErr *exec.ExitError
+	return errors.As(commandErr, &exitErr) &&
+		exitErr.ExitCode() == 1 &&
+		vulnerabilityCount > 0
 }
 
 type snykJSON struct {
@@ -122,6 +145,7 @@ type snykVulnerability struct {
 	Version     string   `json:"version"`
 	FixedIn     []string `json:"fixedIn"`
 	Description string   `json:"description"`
+	From        []string `json:"from"`
 	References  []struct {
 		URL string `json:"url"`
 	} `json:"references"`
@@ -130,13 +154,31 @@ type snykVulnerability struct {
 func normalizeSnykVulnerabilities(
 	input snykJSON,
 ) []Vulnerability {
-	vulnerabilities := make(
-		[]Vulnerability,
-		0,
-		len(input.Vulnerabilities),
-	)
+	type vulnerabilityKey struct {
+		ID               string
+		PackageName      string
+		Version          string
+		FallbackTitle    string
+		FallbackSeverity string
+	}
+
+	vulnerabilities := make([]Vulnerability, 0, len(input.Vulnerabilities))
+	seen := make(map[vulnerabilityKey]int)
 
 	for _, item := range input.Vulnerabilities {
+		key := vulnerabilityKey{
+			ID:          item.ID,
+			PackageName: item.PackageName,
+			Version:     item.Version,
+		}
+
+		// If the advisory ID is missing, use title and severity
+		// as additional identity fields to avoid unrelated merges.
+		if key.ID == "" {
+			key.FallbackTitle = item.Title
+			key.FallbackSeverity = strings.ToLower(item.Severity)
+		}
+
 		var fixedVersion string
 		if len(item.FixedIn) > 0 {
 			fixedVersion = item.FixedIn[0]
@@ -145,7 +187,44 @@ func normalizeSnykVulnerabilities(
 		references := make([]string, 0, len(item.References))
 		for _, reference := range item.References {
 			if reference.URL != "" {
-				references = append(references, reference.URL)
+				references = mergeUniqueStrings(references, []string{reference.URL})
+			}
+		}
+
+		if index, exists := seen[key]; exists {
+			existing := &vulnerabilities[index]
+
+			if existing.FixedVersion == "" {
+				existing.FixedVersion = fixedVersion
+			}
+			if existing.Description == "" {
+				existing.Description = item.Description
+			}
+
+			existing.References = mergeUniqueStrings(
+				existing.References,
+				references,
+			)
+
+			if len(item.From) > 0 {
+				if existing.Evidence == nil {
+					existing.Evidence = make(map[string]any)
+				}
+
+				paths, _ := existing.Evidence["dependency_paths"].([][]string)
+				existing.Evidence["dependency_paths"] = mergeDependencyPath(
+					paths,
+					item.From,
+				)
+			}
+
+			continue
+		}
+
+		evidence := make(map[string]any)
+		if len(item.From) > 0 {
+			evidence["dependency_paths"] = [][]string{
+				append([]string(nil), item.From...),
 			}
 		}
 
@@ -158,8 +237,57 @@ func normalizeSnykVulnerabilities(
 			FixedVersion:   fixedVersion,
 			Description:    item.Description,
 			References:     references,
+			Evidence:       evidence,
 		})
+
+		seen[key] = len(vulnerabilities) - 1
 	}
 
 	return vulnerabilities
+}
+
+func mergeUniqueStrings(existing, incoming []string) []string {
+	for _, candidate := range incoming {
+		if candidate == "" {
+			continue
+		}
+
+		found := false
+		for _, current := range existing {
+			if current == candidate {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			existing = append(existing, candidate)
+		}
+	}
+
+	return existing
+}
+
+func mergeDependencyPath(existing [][]string, incoming []string) [][]string {
+	for _, current := range existing {
+		if equalStringSlices(current, incoming) {
+			return existing
+		}
+	}
+
+	return append(existing, append([]string(nil), incoming...))
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
 }

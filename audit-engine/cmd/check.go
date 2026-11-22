@@ -18,6 +18,8 @@ var checkCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		report := checks.RunHostChecks()
 
+		report.Normalize()
+
 		switch strings.ToLower(checkFormat) {
 		case "json":
 			enc := json.NewEncoder(cmd.OutOrStdout())

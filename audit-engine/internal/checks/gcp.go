@@ -141,6 +141,7 @@ func checkGCPPublicIAM(report *Report, inv cloud.Inventory) {
 		evidence := map[string]any{
 			"project_id":          inv.ProjectID,
 			"role":                role,
+			"binding_members":     members,
 			"public_principals":   exposed,
 			"public_member_count": len(exposed),
 		}

@@ -18,6 +18,8 @@ var kubernetesCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		report := checks.RunKubernetesChecks()
 
+		report.Normalize()
+
 		switch strings.ToLower(kubernetesFormat) {
 		case "json":
 			enc := json.NewEncoder(cmd.OutOrStdout())

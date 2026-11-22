@@ -66,6 +66,8 @@ security checks and combine their findings into one audit report.`,
 			},
 		})
 
+		report.Normalize()
+
 		switch strings.ToLower(scanFormat) {
 		case "json":
 			enc := json.NewEncoder(cmd.OutOrStdout())

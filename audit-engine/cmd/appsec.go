@@ -47,14 +47,7 @@ var appsecCmd = &cobra.Command{
 			},
 		)
 
-		if !scanner.Available(ctx) {
-			for i := range report.Findings {
-				if report.Findings[i].ID == "APPSEC000" {
-					report.Findings[i].Recommendation =
-						"Install Snyk with: npm install --global snyk. Then authenticate with: snyk auth."
-				}
-			}
-		}
+		report.Normalize()
 
 		switch strings.ToLower(appsecFormat) {
 		case "json":
@@ -65,7 +58,13 @@ var appsecCmd = &cobra.Command{
 		case "text":
 			out := cmd.OutOrStdout()
 
-			fmt.Fprintf(out, "Application security: %s\n", report.OverallStatus)
+			for _, module := range report.Modules {
+				fmt.Fprintf(out, "Application security module: %s\n", module.Status)
+				if module.Message != "" {
+					fmt.Fprintf(out, "%s\n", module.Message)
+				}
+			}
+			fmt.Fprintf(out, "Overall status: %s\n", report.OverallStatus)
 			fmt.Fprintf(out, "Passed: %d | Warnings: %d | Critical: %d | Errors: %d\n\n",
 				report.Summary.Passed,
 				report.Summary.Warnings,
