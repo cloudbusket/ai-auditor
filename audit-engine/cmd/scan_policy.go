@@ -53,14 +53,25 @@ func shouldFailOn(report checks.Report, threshold string) (bool, error) {
 		)
 	}
 
+	breached := false
+
 	for _, finding := range report.Findings {
 		level, known := parseSeverity(finding.Severity)
-		if known && level >= minimum {
-			return true, nil
+		if !known {
+			return false, fmt.Errorf(
+				"finding %q has unsupported severity %q; cannot evaluate --fail-on %q",
+				finding.ID,
+				finding.Severity,
+				threshold,
+			)
+		}
+
+		if level >= minimum {
+			breached = true
 		}
 	}
 
-	return false, nil
+	return breached, nil
 }
 func validateFailOnThreshold(threshold string) error {
 	_, err := shouldFailOn(checks.Report{}, threshold)

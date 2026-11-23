@@ -15,6 +15,7 @@ func TestShouldFailOn(t *testing.T) {
 		wantErr   bool
 	}{
 		{"none ignores critical", "none", "critical", false, false},
+		{"none ignores unknown severity", "none", "unexpected", false, false},
 		{"critical matches critical", "critical", "critical", true, false},
 		{"critical ignores high", "critical", "high", false, false},
 		{"high matches critical", "high", "critical", true, false},
@@ -25,6 +26,8 @@ func TestShouldFailOn(t *testing.T) {
 		{"low ignores info", "low", "info", false, false},
 		{"case insensitive", "HIGH", "CRITICAL", true, false},
 		{"invalid threshold", "urgent", "critical", false, true},
+		{"unknown finding severity", "high", "unexpected", false, true},
+		{"empty finding severity", "high", "", false, true},
 	}
 
 	for _, tt := range tests {
@@ -45,5 +48,22 @@ func TestShouldFailOn(t *testing.T) {
 				t.Errorf("shouldFailOn() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestShouldFailOnRejectsUnknownSeverityAfterThresholdMatch(t *testing.T) {
+	report := checks.Report{
+		Findings: []checks.Finding{
+			{ID: "HIGH001", Severity: "high"},
+			{ID: "UNKNOWN001", Severity: "unexpected"},
+		},
+	}
+
+	got, err := shouldFailOn(report, "high")
+	if err == nil {
+		t.Fatal("shouldFailOn() error = nil, want error for unknown severity")
+	}
+	if got {
+		t.Error("shouldFailOn() = true, want false when policy evaluation is invalid")
 	}
 }

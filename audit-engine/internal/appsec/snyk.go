@@ -1,6 +1,7 @@
 package appsec
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -80,21 +81,22 @@ func (s *SnykScanner) Scan(
 		return result, scanCtx.Err()
 	}
 
-	var snykOutput snykJSON
+	snykOutput, parseErr := parseSnykJSON(output)
+	if parseErr != nil {
+		result.Error = strings.TrimSpace(string(output))
+		if result.Error == "" {
+			result.Error = parseErr.Error()
+		}
 
-	if err := json.Unmarshal(output, &snykOutput); err != nil {
 		if commandErr != nil {
-			result.Error = strings.TrimSpace(string(output))
 			return result, fmt.Errorf(
-				"Snyk scan failed: %w",
+				"Snyk scan failed: %w (invalid JSON output: %v)",
 				commandErr,
+				parseErr,
 			)
 		}
 
-		return result, fmt.Errorf(
-			"unable to parse Snyk JSON output: %w",
-			err,
-		)
+		return result, parseErr
 	}
 
 	result.Vulnerabilities = normalizeSnykVulnerabilities(snykOutput)
@@ -135,6 +137,72 @@ func isSuccessfulSnykExit(commandErr error, vulnerabilityCount int) bool {
 
 type snykJSON struct {
 	Vulnerabilities []snykVulnerability `json:"vulnerabilities"`
+}
+
+// parseSnykJSON requires an explicit vulnerabilities array. A missing or null
+// field must never be interpreted as a clean scan.
+func parseSnykJSON(output []byte) (snykJSON, error) {
+	var envelope struct {
+		Vulnerabilities json.RawMessage `json:"vulnerabilities"`
+	}
+
+	if err := json.Unmarshal(output, &envelope); err != nil {
+		return snykJSON{}, fmt.Errorf("unable to parse Snyk JSON output: %w", err)
+	}
+
+	raw := bytes.TrimSpace(envelope.Vulnerabilities)
+	if len(raw) == 0 {
+		return snykJSON{}, fmt.Errorf(
+			"invalid Snyk JSON output: missing vulnerabilities array",
+		)
+	}
+
+	if raw[0] != '[' {
+		return snykJSON{}, fmt.Errorf(
+			"invalid Snyk JSON output: vulnerabilities must be an array",
+		)
+	}
+
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return snykJSON{}, fmt.Errorf(
+			"invalid Snyk vulnerabilities array: %w",
+			err,
+		)
+	}
+
+	vulnerabilities := make([]snykVulnerability, 0, len(entries))
+
+	for i, entry := range entries {
+		entry = bytes.TrimSpace(entry)
+
+		if len(entry) == 0 || entry[0] != '{' {
+			return snykJSON{}, fmt.Errorf(
+				"invalid Snyk vulnerability at index %d: expected an object",
+				i,
+			)
+		}
+
+		var vulnerability snykVulnerability
+		if err := json.Unmarshal(entry, &vulnerability); err != nil {
+			return snykJSON{}, fmt.Errorf(
+				"invalid Snyk vulnerability at index %d: %w",
+				i,
+				err,
+			)
+		}
+
+		if strings.TrimSpace(vulnerability.Severity) == "" {
+			return snykJSON{}, fmt.Errorf(
+				"invalid Snyk vulnerability at index %d: missing severity",
+				i,
+			)
+		}
+
+		vulnerabilities = append(vulnerabilities, vulnerability)
+	}
+
+	return snykJSON{Vulnerabilities: vulnerabilities}, nil
 }
 
 type snykVulnerability struct {

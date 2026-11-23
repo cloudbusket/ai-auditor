@@ -244,6 +244,48 @@ func TestSnykScannerScanWithFakeCLI(t *testing.T) {
 			wantSuccess: false,
 			wantError:   true,
 		},
+		{
+			name:        "missing vulnerabilities field",
+			exitCode:    0,
+			output:      `{"ok":true}`,
+			wantSuccess: false,
+			wantError:   true,
+		},
+		{
+			name:        "empty object",
+			exitCode:    0,
+			output:      `{}`,
+			wantSuccess: false,
+			wantError:   true,
+		},
+		{
+			name:        "null vulnerabilities",
+			exitCode:    0,
+			output:      `{"vulnerabilities":null}`,
+			wantSuccess: false,
+			wantError:   true,
+		},
+		{
+			name:        "object instead of vulnerabilities array",
+			exitCode:    0,
+			output:      `{"vulnerabilities":{}}`,
+			wantSuccess: false,
+			wantError:   true,
+		},
+		{
+			name:        "null vulnerability entry",
+			exitCode:    0,
+			output:      `{"vulnerabilities":[null]}`,
+			wantSuccess: false,
+			wantError:   true,
+		},
+		{
+			name:        "vulnerability missing severity",
+			exitCode:    0,
+			output:      `{"vulnerabilities":[{"id":"TEST-001","name":"example","version":"1.0.0"}]}`,
+			wantSuccess: false,
+			wantError:   true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -283,6 +325,10 @@ func TestSnykScannerScanWithFakeCLI(t *testing.T) {
 					len(result.Vulnerabilities),
 					tt.wantFindings,
 				)
+			}
+
+			if tt.wantError && result.Error == "" {
+				t.Error("expected ScanResult.Error to contain diagnostic information")
 			}
 		})
 	}
