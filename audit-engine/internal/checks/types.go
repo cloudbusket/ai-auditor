@@ -70,6 +70,9 @@ type Finding struct {
 	Description    string         `json:"description,omitempty"`
 	Recommendation string         `json:"recommendation,omitempty"`
 	Evidence       map[string]any `json:"evidence,omitempty"`
+	RiskScore     *int   `json:"risk_score,omitempty"`
+	RiskBand      string `json:"risk_band,omitempty"`
+	RiskPriority  string `json:"risk_priority,omitempty"`
 }
 
 type Summary struct {

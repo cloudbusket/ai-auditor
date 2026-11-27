@@ -422,6 +422,11 @@ func (r *Report) Normalize() {
 		r.Findings = append(r.Findings, finding)
 	}
 
+	// Calculate risk after deduplication and merging.
+	for i := range r.Findings {
+		applyRisk(&r.Findings[i])
+	}
+
 	sort.Slice(r.Findings, func(i, j int) bool {
 		a, b := r.Findings[i], r.Findings[j]
 		if a.Fingerprint != b.Fingerprint {
