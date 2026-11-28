@@ -314,6 +314,7 @@ func checksHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	report := checks.RunHostChecks()
+	report.Normalize()
 	writeJSON(w, http.StatusOK, report)
 }
 
@@ -637,6 +638,58 @@ dl.evidence-list {
         padding: 15px;
     }
 }
+
+.risk-overview {
+    margin: 16px 0 22px;
+    padding: 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+.risk-overview h3 {
+    margin: 0 0 14px;
+}
+.risk-count-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.risk-metric, .risk-count-card {
+    padding: 12px;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+.risk-metric span, .risk-count-card span,
+.risk-metric small {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+}
+.risk-metric strong {
+    display: block;
+    margin: 6px 0;
+    font-size: 23px;
+}
+.risk-count-card strong {
+    display: block;
+    margin-top: 5px;
+    font-size: 20px;
+}
+.risk-top-list {
+    padding-left: 22px;
+}
+.risk-top-list li {
+    margin: 9px 0;
+}
+.risk-top-list li span {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 3px;
+}
+
 </style>
 </head>
 
@@ -956,14 +1009,98 @@ function renderFindingDetails(finding) {
         "</details>";
 }
 
-function renderFindings(findings, allowRemediation) {
-    if (!findings || findings.length === 0) {
-        return "<p class='muted'>No findings.</p>";
+function renderRiskOverview(findings) {
+    const bands = {
+        critical: 0,
+        very_high: 0,
+        moderate: 0,
+        low: 0,
+        informational: 0,
+        unclassified: 0
+    };
+
+    const classified = [];
+
+    findings.forEach(function(f) {
+        const band = String(f.risk_band || "").toLowerCase();
+        const score = Number(f.risk_score);
+
+        if (f.risk_score == null || !Number.isFinite(score) ||
+            !Object.prototype.hasOwnProperty.call(bands, band) ||
+            band === "unclassified") {
+            bands.unclassified++;
+            return;
+        }
+
+        bands[band]++;
+        classified.push({finding: f, score: score});
+    });
+
+    classified.sort(function(a, b) {
+        return b.score - a.score;
+    });
+
+    const maximum = classified.length ? classified[0] : null;
+
+    let html = "<div class='risk-overview'>" +
+        "<h3>Finding Risk Overview</h3>" +
+        "<div class='risk-count-grid'>" +
+        "<div class='risk-metric'><span>Maximum Finding Risk</span><strong>" +
+        (maximum ? safe(maximum.score) + " / 100" : "--") +
+        "</strong><small>" +
+        (maximum ? safe(maximum.finding.risk_band) : "No classified findings") +
+        "</small></div>" +
+        "<div class='risk-metric'><span>Total Findings</span><strong>" +
+        safe(findings.length) + "</strong></div>" +
+        "<div class='risk-metric'><span>Classified Findings</span><strong>" +
+        safe(classified.length) + "</strong></div>" +
+        "<div class='risk-metric'><span>Unclassified</span><strong>" +
+        safe(bands.unclassified) + "</strong></div>" +
+        "</div>" +
+        "<div class='risk-count-grid'>" +
+        "<div class='risk-count-card'><span>Critical</span><strong>" +
+        safe(bands.critical) + "</strong></div>" +
+        "<div class='risk-count-card'><span>Very High</span><strong>" +
+        safe(bands.very_high) + "</strong></div>" +
+        "<div class='risk-count-card'><span>Moderate</span><strong>" +
+        safe(bands.moderate) + "</strong></div>" +
+        "<div class='risk-count-card'><span>Low</span><strong>" +
+        safe(bands.low) + "</strong></div>" +
+        "<div class='risk-count-card'><span>Informational</span><strong>" +
+        safe(bands.informational) + "</strong></div>" +
+        "</div>";
+
+    if (classified.length > 0) {
+        html += "<h4>Highest-Risk Findings</h4><ol class='risk-top-list'>";
+
+        classified.slice(0, 5).forEach(function(item) {
+            const f = item.finding;
+            html += "<li><strong>" + safe(item.score) + " / 100</strong> — " +
+                safe(f.asset || f.message || f.id || "Unnamed finding") +
+                "<span>" + safe(f.risk_band) + " · " +
+                safe(f.risk_priority || "Priority unavailable") +
+                "</span></li>";
+        });
+
+        html += "</ol>";
     }
 
-    let html = "<table><thead><tr>" +
+    return html + "</div>";
+}
+
+function renderFindings(findings, allowRemediation) {
+    findings = Array.isArray(findings) ? findings : [];
+
+    let html = renderRiskOverview(findings);
+
+    if (findings.length === 0) {
+        return html + "<p class='muted'>No findings.</p>";
+    }
+
+    html += "<table><thead><tr>" +
         "<th>ID</th><th>Asset</th><th>Category</th>" +
-        "<th>Severity</th><th>Status</th><th>Message</th>" +
+        "<th>Severity</th><th>Risk Score</th><th>Risk Band</th>" +
+        "<th>Risk Priority</th><th>Status</th><th>Message</th>" +
         "<th>Recommendation</th><th>Details</th><th>AI Remediation</th>" +
         "</tr></thead><tbody>";
 
@@ -977,8 +1114,11 @@ function renderFindings(findings, allowRemediation) {
             "<td>" + safe(f.asset || "--") + "</td>" +
             "<td>" + safe(f.category || "--") + "</td>" +
             "<td>" + safe(f.severity || "--") + "</td>" +
+            "<td>" + safe(f.risk_score == null ? "--" : f.risk_score) + "</td>" +
+            "<td>" + safe(f.risk_band || "--") + "</td>" +
+            "<td>" + safe(f.risk_priority || "--") + "</td>" +
             "<td><span class='" + statusClass(f.status) + "'>" +
-                safe(f.status || "--") + "</span></td>" +
+            safe(f.status || "--") + "</span></td>" +
             "<td>" + safe(f.message || "--") + "</td>" +
             "<td>" + safe(f.recommendation || "--") + "</td>" +
             "<td>" + renderFindingDetails(f) + "</td>" +

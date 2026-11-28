@@ -126,3 +126,44 @@ func TestDashboardPageIncludesRequiredJavaScriptHandlers(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardPageIncludesRiskOverview(t *testing.T) {
+	t.Setenv("AUDITOR_HISTORY_DIR", t.TempDir())
+
+	handler, err := NewHandler("test-dashboard-password-123")
+	if err != nil {
+		t.Fatalf("NewHandler returned error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.SetBasicAuth("auditor", "test-dashboard-password-123")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	page := rec.Body.String()
+
+	required := []string{
+		"function renderRiskOverview(findings)",
+		"Maximum Finding Risk",
+		"Classified Findings",
+		"Unclassified",
+		"Highest-Risk Findings",
+		"Very High",
+		"Informational",
+		"renderRiskOverview(findings)",
+		"f.risk_score",
+		"f.risk_band",
+		"f.risk_priority",
+	}
+
+	for _, fragment := range required {
+		if !strings.Contains(page, fragment) {
+			t.Errorf("dashboard page is missing risk overview fragment: %q", fragment)
+		}
+	}
+}
