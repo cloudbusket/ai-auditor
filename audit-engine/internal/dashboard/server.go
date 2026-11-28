@@ -1010,6 +1010,60 @@ function renderEvidenceValue(value, depth) {
     return "<span class='evidence-value'>" + safe(text) + "</span>";
 }
 
+function renderFindingExplanation(explanation) {
+    if (!explanation || typeof explanation !== "object") {
+        return "";
+    }
+
+    const fields = [
+        ["Technical explanation", explanation.technical_explanation],
+        ["Business impact", explanation.business_impact],
+        ["Remediation rationale", explanation.remediation_rationale]
+    ];
+
+    const content = fields
+        .filter(function (field) {
+            return typeof field[1] === "string" && field[1].trim() !== "";
+        })
+        .map(function (field) {
+            return "<p><strong>" + field[0] + ":</strong> " +
+                safe(field[1]) + "</p>";
+        })
+        .join("");
+
+    const confidenceLabels = {
+        evidence_backed: "Evidence-backed",
+        potential: "Potential",
+        undetermined: "Undetermined"
+    };
+
+    const confidenceKey = String(
+        explanation.impact_confidence || "undetermined"
+    ).toLowerCase();
+
+    const confidence = confidenceLabels[confidenceKey] || "Undetermined";
+
+    const confidenceHTML =
+        "<p><strong>Impact confidence:</strong> " +
+        safe(confidence) + "</p>";
+
+    const whyItMatters = typeof explanation.why_it_matters === "string" &&
+        explanation.why_it_matters.trim() !== ""
+        ? "<p>" + safe(explanation.why_it_matters) + "</p>"
+        : "";
+
+    if (!content && !whyItMatters) {
+        return "";
+    }
+
+    return "<section class='finding-explanation'>" +
+        "<h4>Why this matters</h4>" +
+        whyItMatters +
+        content +
+        confidenceHTML +
+        "</section>";
+}
+
 function renderFindingDetails(finding) {
     const description = finding.description
         ? "<p>" + safe(finding.description) + "</p>"
@@ -1076,10 +1130,13 @@ function renderFindingDetails(finding) {
             "<p><strong>Response guidance:</strong> " + guidance + "</p>" +
         "</section>";
 
+    const explanation = renderFindingExplanation(finding.explanation);
+
     return "<details class='finding-details'>" +
         "<summary>View Details</summary>" +
         "<div class='finding-detail-content'>" +
             riskContext +
+            explanation +
             "<section>" +
                 "<h4>What happened?</h4>" +
                 description +

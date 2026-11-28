@@ -58,21 +58,30 @@ type ModuleResult struct {
 	DurationMs  int64        `json:"duration_ms"`
 }
 
+type FindingExplanation struct {
+	WhyItMatters         string `json:"why_it_matters,omitempty"`
+	TechnicalExplanation string `json:"technical_explanation,omitempty"`
+	BusinessImpact       string `json:"business_impact,omitempty"`
+	ImpactConfidence     string `json:"impact_confidence,omitempty"`
+	RemediationRationale string `json:"remediation_rationale,omitempty"`
+}
+
 type Finding struct {
-	ID             string         `json:"id"`
-	Fingerprint    string         `json:"fingerprint,omitempty"`
-	Source         string         `json:"source"`
-	Category       string         `json:"category"`
-	Asset          string         `json:"asset,omitempty"`
-	Status         Status         `json:"status"`
-	Severity       string         `json:"severity"`
-	Message        string         `json:"message"`
-	Description    string         `json:"description,omitempty"`
-	Recommendation string         `json:"recommendation,omitempty"`
-	Evidence       map[string]any `json:"evidence,omitempty"`
-	RiskScore     *int   `json:"risk_score,omitempty"`
-	RiskBand      string `json:"risk_band,omitempty"`
-	RiskPriority  string `json:"risk_priority,omitempty"`
+	ID             string              `json:"id"`
+	Fingerprint    string              `json:"fingerprint,omitempty"`
+	Source         string              `json:"source"`
+	Category       string              `json:"category"`
+	Asset          string              `json:"asset,omitempty"`
+	Status         Status              `json:"status"`
+	Severity       string              `json:"severity"`
+	Message        string              `json:"message"`
+	Description    string              `json:"description,omitempty"`
+	Recommendation string              `json:"recommendation,omitempty"`
+	Evidence       map[string]any      `json:"evidence,omitempty"`
+	RiskScore      *int                `json:"risk_score,omitempty"`
+	RiskBand       string              `json:"risk_band,omitempty"`
+	RiskPriority   string              `json:"risk_priority,omitempty"`
+	Explanation    *FindingExplanation `json:"explanation,omitempty"`
 }
 
 type Summary struct {

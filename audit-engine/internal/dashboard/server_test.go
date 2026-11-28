@@ -176,6 +176,20 @@ func TestDashboardPageIncludesRiskOverview(t *testing.T) {
 		"Filter by classification",
 		"Showing ",
 		"Sorted by highest risk score",
+
+		"function renderFindingExplanation(explanation)",
+		"Why this matters",
+		"Technical explanation",
+		"Business impact",
+		"Remediation rationale",
+		"Impact confidence",
+		"Evidence-backed",
+		"Potential",
+		"explanation.why_it_matters",
+		"explanation.technical_explanation",
+		"explanation.business_impact",
+		"explanation.remediation_rationale",
+		"explanation.impact_confidence",
 	}
 
 	for _, fragment := range required {

@@ -422,9 +422,10 @@ func (r *Report) Normalize() {
 		r.Findings = append(r.Findings, finding)
 	}
 
-	// Calculate risk after deduplication and merging.
+	// Calculate risk and deterministic explanations after deduplication and merging.
 	for i := range r.Findings {
 		applyRisk(&r.Findings[i])
+		applyExplanation(&r.Findings[i])
 	}
 
 	sort.Slice(r.Findings, func(i, j int) bool {

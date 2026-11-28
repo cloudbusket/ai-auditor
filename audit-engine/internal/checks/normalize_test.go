@@ -244,7 +244,10 @@ func TestReportNormalizeDeduplicatesAndMergesEvidence(t *testing.T) {
 		Severity: "medium",
 		Message:  "Example vulnerability",
 		Evidence: map[string]any{
-			"references": []string{"https://example.com/advisory"},
+			"vulnerability_id": "TEST-123",
+			"package":          "example-package",
+			"version":          "1.0.0",
+			"references":       []string{"https://example.com/advisory"},
 			"dependency_paths": [][]string{
 				{"root", "package-a", "package-b"},
 			},
@@ -260,6 +263,9 @@ func TestReportNormalizeDeduplicatesAndMergesEvidence(t *testing.T) {
 		Severity: "high",
 		Message:  "Example vulnerability",
 		Evidence: map[string]any{
+			"vulnerability_id": "TEST-123",
+			"package":          "example-package",
+			"version":          "1.0.0",
 			"references": []string{
 				"https://example.com/advisory",
 				"https://example.com/another-advisory",
@@ -281,6 +287,19 @@ func TestReportNormalizeDeduplicatesAndMergesEvidence(t *testing.T) {
 	}
 
 	finding := report.Findings[0]
+
+	if finding.Explanation == nil {
+		t.Fatal("expected deterministic explanation after normalization")
+	}
+	if finding.Explanation.ImpactConfidence != "potential" {
+		t.Fatalf("expected potential impact confidence, got %q", finding.Explanation.ImpactConfidence)
+	}
+	if finding.Explanation.WhyItMatters == "" ||
+		finding.Explanation.TechnicalExplanation == "" ||
+		finding.Explanation.BusinessImpact == "" ||
+		finding.Explanation.RemediationRationale == "" {
+		t.Fatalf("expected complete APPSEC explanation, got %+v", finding.Explanation)
+	}
 
 	if finding.Severity != "high" {
 		t.Fatalf("expected highest severity high, got %q", finding.Severity)
