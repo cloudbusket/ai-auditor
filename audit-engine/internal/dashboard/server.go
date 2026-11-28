@@ -451,6 +451,45 @@ table {
     min-width: 520px;
 }
 
+.finding-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 12px;
+    margin: 14px 0;
+    padding: 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.finding-filter {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 150px;
+}
+
+.finding-filter label {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.finding-filter select {
+    min-width: 150px;
+    padding: 9px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #0b1220;
+    color: var(--text);
+}
+
+.finding-filter-count {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 10px 0;
+}
+
 th, td {
     padding: 10px;
     text-align: left;
@@ -986,9 +1025,61 @@ function renderFindingDetails(finding) {
         ? "<p>" + safe(finding.recommendation) + "</p>"
         : "<p class='muted'>No recommendation was provided.</p>";
 
+    const score = finding.risk_score == null ||
+        !Number.isFinite(Number(finding.risk_score))
+        ? "Not scored"
+        : safe(String(finding.risk_score) + "/100");
+
+    const bandLabels = {
+        critical: "Critical",
+        very_high: "Very High",
+        moderate: "Moderate",
+        low: "Low",
+        informational: "Informational",
+        unclassified: "Unclassified"
+    };
+
+    const priorityLabels = {
+        immediate: "Immediate",
+        urgent: "Urgent",
+        planned: "Planned",
+        routine: "Routine",
+        manual_review: "Manual Review"
+    };
+
+    const bandKey = String(finding.risk_band || "unclassified").toLowerCase();
+    const priorityKey = String(finding.risk_priority || "manual_review").toLowerCase();
+
+    const band = safe(bandLabels[bandKey] || "Unclassified");
+    const priority = safe(priorityLabels[priorityKey] || "Manual Review");
+    const severity = safe(finding.severity || "Not recorded");
+
+    const responseGuidance = {
+        immediate: "Prioritize prompt review and remediation.",
+        urgent: "Review and plan remediation as a high priority.",
+        planned: "Include this finding in planned remediation work.",
+        routine: "Address through routine maintenance and review.",
+        manual_review: "Review manually; standard risk classification is unavailable."
+    };
+
+    const guidance = safe(
+        responseGuidance[priorityKey] || responseGuidance.manual_review
+    );
+
+    const riskContext =
+        "<section class='risk-context'>" +
+            "<h4>Risk Context</h4>" +
+            "<p><strong>Risk score:</strong> " + score + "</p>" +
+            "<p><strong>Risk band:</strong> " + band + "</p>" +
+            "<p><strong>Priority:</strong> " + priority + "</p>" +
+            "<p><strong>Severity:</strong> " + severity + "</p>" +
+            "<p><strong>Response guidance:</strong> " + guidance + "</p>" +
+        "</section>";
+
     return "<details class='finding-details'>" +
         "<summary>View Details</summary>" +
         "<div class='finding-detail-content'>" +
+            riskContext +
             "<section>" +
                 "<h4>What happened?</h4>" +
                 description +
@@ -1097,19 +1188,103 @@ function renderFindings(findings, allowRemediation) {
         return html + "<p class='muted'>No findings.</p>";
     }
 
-    html += "<table><thead><tr>" +
+    const validBands = [
+        "critical", "very_high", "moderate",
+        "low", "informational"
+    ];
+
+    const validPriorities = [
+        "immediate", "urgent", "planned", "routine"
+    ];
+
+    // Sort a copy so the original report order is not modified.
+    const sortedFindings = findings.slice().sort(function(a, b) {
+        const scoreA = a.risk_score == null
+            ? -1 : Number(a.risk_score);
+        const scoreB = b.risk_score == null
+            ? -1 : Number(b.risk_score);
+
+        const validA = Number.isFinite(scoreA) ? scoreA : -1;
+        const validB = Number.isFinite(scoreB) ? scoreB : -1;
+
+        return validB - validA;
+    });
+
+    html += "<div class='finding-browser'>" +
+        "<div class='finding-filters'>" +
+
+        "<div class='finding-filter'>" +
+        "<label>Risk band</label>" +
+        "<select aria-label='Filter by risk band' data-finding-filter='band'>" +
+        "<option value='all'>All risk bands</option>" +
+        "<option value='critical'>Critical</option>" +
+        "<option value='very_high'>Very High</option>" +
+        "<option value='moderate'>Moderate</option>" +
+        "<option value='low'>Low</option>" +
+        "<option value='informational'>Informational</option>" +
+        "<option value='unclassified'>Unclassified</option>" +
+        "</select></div>" +
+
+        "<div class='finding-filter'>" +
+        "<label>Priority</label>" +
+        "<select aria-label='Filter by priority' data-finding-filter='priority'>" +
+        "<option value='all'>All priorities</option>" +
+        "<option value='immediate'>Immediate</option>" +
+        "<option value='urgent'>Urgent</option>" +
+        "<option value='planned'>Planned</option>" +
+        "<option value='routine'>Routine</option>" +
+        "<option value='manual_review'>Manual Review</option>" +
+        "</select></div>" +
+
+        "<div class='finding-filter'>" +
+        "<label>Classification</label>" +
+        "<select aria-label='Filter by classification' data-finding-filter='classification'>" +
+        "<option value='all'>All findings</option>" +
+        "<option value='classified'>Classified</option>" +
+        "<option value='unclassified'>Unclassified</option>" +
+        "</select></div>" +
+
+        "<button type='button' class='secondary' " +
+        "data-finding-reset>Reset filters</button>" +
+        "</div>" +
+
+        "<p class='finding-filter-count' aria-live='polite' " +
+        "data-finding-count>Showing " + safe(findings.length) + " of " + safe(findings.length) + " findings · Sorted by highest risk score</p>" +
+
+        "<div class='finding-results'><table><thead><tr>" +
         "<th>ID</th><th>Asset</th><th>Category</th>" +
         "<th>Severity</th><th>Risk Score</th><th>Risk Band</th>" +
         "<th>Risk Priority</th><th>Status</th><th>Message</th>" +
         "<th>Recommendation</th><th>Details</th><th>AI Remediation</th>" +
         "</tr></thead><tbody>";
 
-    findings.forEach(function(f) {
-        const actionable = allowRemediation && ["warning", "critical", "error"].includes(
-            String(f.status || "").toLowerCase()
-        );
+    sortedFindings.forEach(function(f) {
+        const score = f.risk_score == null
+            ? NaN : Number(f.risk_score);
 
-        html += "<tr>" +
+        const rawBand = String(f.risk_band || "").toLowerCase();
+        const classified = Number.isFinite(score) &&
+            validBands.includes(rawBand);
+
+        const band = classified ? rawBand : "unclassified";
+
+        const rawPriority = String(
+            f.risk_priority || ""
+        ).toLowerCase();
+
+        const priority = classified &&
+            validPriorities.includes(rawPriority)
+            ? rawPriority : "manual_review";
+
+        const actionable = allowRemediation && [
+            "warning", "critical", "error"
+        ].includes(String(f.status || "").toLowerCase());
+
+        html += "<tr data-risk-band='" + safe(band) +
+            "' data-risk-priority='" + safe(priority) +
+            "' data-classification='" +
+            (classified ? "classified" : "unclassified") + "'>" +
+
             "<td>" + safe(f.id) + "</td>" +
             "<td>" + safe(f.asset || "--") + "</td>" +
             "<td>" + safe(f.category || "--") + "</td>" +
@@ -1130,8 +1305,87 @@ function renderFindings(findings, allowRemediation) {
             "</td></tr>";
     });
 
-    return html + "</tbody></table>";
+    html += "</tbody></table></div></div>";
+
+    return html;
 }
+
+function applyFindingFilters(container) {
+    if (!container) {
+        return;
+    }
+
+    const band = container.querySelector(
+        "[data-finding-filter='band']"
+    ).value;
+
+    const priority = container.querySelector(
+        "[data-finding-filter='priority']"
+    ).value;
+
+    const classification = container.querySelector(
+        "[data-finding-filter='classification']"
+    ).value;
+
+    const rows = container.querySelectorAll(
+        ".finding-results tbody tr"
+    );
+
+    let visible = 0;
+
+    rows.forEach(function(row) {
+        const matches =
+            (band === "all" || row.dataset.riskBand === band) &&
+            (priority === "all" ||
+                row.dataset.riskPriority === priority) &&
+            (classification === "all" ||
+                row.dataset.classification === classification);
+
+        row.hidden = !matches;
+
+        if (matches) {
+            visible++;
+        }
+    });
+
+    const count = container.querySelector("[data-finding-count]");
+
+    if (count) {
+        count.textContent =
+            "Showing " + visible + " of " + rows.length +
+            " findings · Sorted by highest risk score";
+    }
+}
+
+document.addEventListener("change", function(event) {
+    if (!event.target.matches("[data-finding-filter]")) {
+        return;
+    }
+
+    applyFindingFilters(event.target.closest(".finding-browser"));
+});
+
+document.addEventListener("click", function(event) {
+    const button = event.target.closest("[data-finding-reset]");
+
+    if (!button) {
+        return;
+    }
+
+    const container = button.closest(".finding-browser");
+
+    if (!container) {
+        return;
+    }
+
+    container.querySelectorAll("[data-finding-filter]").forEach(
+        function(select) {
+            select.value = "all";
+        }
+    );
+
+    applyFindingFilters(container);
+});
 
 async function refreshAIProvider() {
     const status = document.getElementById("aiProviderStatus");

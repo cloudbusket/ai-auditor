@@ -149,6 +149,13 @@ func TestDashboardPageIncludesRiskOverview(t *testing.T) {
 
 	required := []string{
 		"function renderRiskOverview(findings)",
+		"function renderFindingDetails(finding)",
+		"Risk Context",
+		"Risk score:",
+		"Risk band:",
+		"Response guidance:",
+		"Not scored",
+		"Prioritize prompt review and remediation.",
 		"Maximum Finding Risk",
 		"Classified Findings",
 		"Unclassified",
@@ -159,6 +166,16 @@ func TestDashboardPageIncludesRiskOverview(t *testing.T) {
 		"f.risk_score",
 		"f.risk_band",
 		"f.risk_priority",
+		"data-finding-filter='band'",
+		"data-finding-filter='priority'",
+		"data-finding-filter='classification'",
+		"data-finding-reset",
+		"function applyFindingFilters(container)",
+		"Filter by risk band",
+		"Filter by priority",
+		"Filter by classification",
+		"Showing ",
+		"Sorted by highest risk score",
 	}
 
 	for _, fragment := range required {
